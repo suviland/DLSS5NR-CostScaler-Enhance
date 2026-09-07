@@ -79,8 +79,8 @@ static int   s_keyToggleProxy   = VK_SPACE;
 static int   s_keyToggleMode    = VK_END;
 static int   s_keyScaleUp       = VK_PRIOR;
 static int   s_keyScaleDown     = VK_NEXT;
-static bool  s_enableUi         = true;   // proxy overlay panel hotkey (Ctrl+Alt+F10)
-static int   s_keyToggleUi      = VK_F10; // base key of the overlay combo
+static bool  s_enableUi         = true;   // proxy overlay panel hotkey (Ctrl+Alt+F11)
+static int   s_keyToggleUi      = VK_F11; // base key of the overlay combo
 
 // Debounce & Notification State
 static bool      s_dirty          = false;
@@ -246,7 +246,7 @@ static void LoadIniSettings() {
     s_keyToggleMode  = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   iniPath.c_str());
     s_keyScaleUp     = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, iniPath.c_str());
     s_keyScaleDown   = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  iniPath.c_str());
-    s_keyToggleUi    = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F10, iniPath.c_str());
+    s_keyToggleUi    = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F11, iniPath.c_str());
 }
 
 static void SaveIniSettings() {

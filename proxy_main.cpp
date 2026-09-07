@@ -72,8 +72,8 @@ static std::atomic<int>      g_keyToggleProxy(VK_SPACE);
 static std::atomic<int>      g_keyToggleMode(VK_END);
 static std::atomic<int>      g_keyScaleUp(VK_PRIOR);
 static std::atomic<int>      g_keyScaleDown(VK_NEXT);
-static std::atomic<bool>     g_enableUi(true);       // allow Ctrl+Alt+F10 overlay toggle
-static std::atomic<int>      g_keyToggleUI(VK_F10);  // base key of the overlay toggle combo
+static std::atomic<bool>     g_enableUi(true);       // allow Ctrl+Alt+F11 overlay toggle
+static std::atomic<int>      g_keyToggleUI(VK_F11);  // base key of the overlay toggle combo
 static wchar_t               g_iniPath[MAX_PATH] = { 0 };
 static FILETIME              g_lastIniWriteTime = { 0 };
 
@@ -183,7 +183,7 @@ static void LoadConfig() {
     g_keyToggleMode.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   g_iniPath));
     g_keyScaleUp.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, g_iniPath));
     g_keyScaleDown.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  g_iniPath));
-    g_keyToggleUI.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F10, g_iniPath));
+    g_keyToggleUI.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F11, g_iniPath));
 
     Log("[Proxy] Config loaded: EnableProxy = %d, ResolutionScale = %.2f, EnlargementMode = %u, TransferStrength = %.2f, Sharpness = %.2f, ColorStrength = %.2f, EnableHotkeys = %d, EnableUi = %d",
         g_enableProxy.load() ? 1 : 0, val, g_enlargementMode.load(), g_transferStrength.load(), g_sharpness.load(), g_colorStrength.load(), g_enableHotkeys.load() ? 1 : 0, g_enableUi.load() ? 1 : 0);
@@ -358,7 +358,7 @@ static void CheckHotkeys() {
             s_lastPress = now;
             EnsureUiHooksRegistered();
             dlssnr_proxyui::OverlayToggle();
-            Log("[Proxy] Hotkey UI toggle pressed (Ctrl+Alt+F10)");
+            Log("[Proxy] Hotkey UI toggle pressed (Ctrl+Alt+F11)");
             return;
         }
     }
@@ -894,7 +894,7 @@ __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_Init_Ext(
     std::lock_guard<std::recursive_mutex> lock(g_proxyMutex);
     EnsureRealModuleLoaded();
     LoadConfig();
-    EnsureUiHooksRegistered(); // make the Ctrl+Alt+F10 overlay panel available
+    EnsureUiHooksRegistered(); // make the Ctrl+Alt+F11 overlay panel available
 
     Log("[Proxy] NVSDK_NGX_D3D12_Init_Ext (AppId=0x%llX, Device=%p)", InApplicationId, InDevice);
     if (!real_InitExt) return -1;

@@ -39,7 +39,7 @@ struct UiValues {
     int    keyToggleMode   = VK_END;
     int    keyScaleUp      = VK_PRIOR;
     int    keyScaleDown    = VK_NEXT;
-    int    keyToggleUi     = VK_F10;
+    int    keyToggleUi     = VK_F11;
 
     bool Equals(const UiValues& o) const {
         return enableProxy == o.enableProxy && scale == o.scale && mode == o.mode &&
@@ -89,8 +89,8 @@ inline void FormatKeyCombo(int vk, bool withMods, wchar_t* out, size_t cap) {
 }
 
 // Project homepage (clickable "GitHub" row shared by overlay & console)
-static const wchar_t kGithubUrl[]  = L"https://github.com/suviland/DLSSNR-Cost-Scaler-CN";
-static const wchar_t kGithubShow[] = L"github.com/suviland/DLSSNR-Cost-Scaler-CN";
+static const wchar_t kGithubUrl[]  = L"https://github.com/suviland/DLSSNR-Cost-Scaler-panel";
+static const wchar_t kGithubShow[] = L"github.com/suviland/DLSSNR-Cost-Scaler-panel";
 
 // ============================================================================
 // Theme + GDI helpers

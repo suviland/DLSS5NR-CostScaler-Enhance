@@ -19,7 +19,7 @@
 - 内置 **AMD RCAS**（鲁棒对比度自适应锐化）通道。
 - **游戏内热重载**：修改 `nvngx_dlssnr.ini` 后约 1 秒内生效，无需重启游戏。
 - **游戏内热键**：实时开关、切换模式、微调缩放。
-- **游戏内悬浮面板**：按 `Ctrl+Alt+F10` 呼出**中英双语置顶面板**，全程鼠标操作（拖滑杆、点预设/分段、拨开关），游戏无需中断。
+- **游戏内悬浮面板**：按 `Ctrl+Alt+F11` 呼出**中英双语置顶面板**，全程鼠标操作（拖滑杆、点预设/分段、拨开关），游戏无需中断。
 - **独立控制台 EXE**：`dlssnr_console.exe` 可在游戏外编辑同一套设置（INI + 共享内存实时联动）。
 - 支持 SDR（B8G8R8A8 / R8G8B8A8）、HDR10 PQ（R10G10B10A2）、scRGB（R16G16B16A16_FLOAT）与三通道 HDR（R11G11B10_FLOAT）。
 - **动态子矩形跟踪**：为使用动态分辨率缩放（DRS）的游戏保留视口偏移。
@@ -44,7 +44,7 @@
 3. 把发布包里的代理 `nvngx_dlssnr.dll` 和 `nvngx_dlssnr.ini` 复制到同一目录。
 4. *（可选）* 把 `dlssnr_console.exe` 也放到同目录，即可在游戏外调整设置。
 5. *（ReShade 用户可选）* 把 `dlssnr-companion.addon64` 复制到游戏目录，可在 ReShade Home 菜单中获得一份实时配置面板。
-6. 启动游戏。游戏内按 `Ctrl+Alt+F10`（或运行 `dlssnr_console.exe`）打开配置面板。
+6. 启动游戏。游戏内按 `Ctrl+Alt+F11`（或运行 `dlssnr_console.exe`）打开配置面板。
 
 ---
 
@@ -87,7 +87,7 @@ Sharpness = 0.20
 ; 启用游戏内快捷键
 EnableHotkeys = 1
 
-; 启用游戏内悬浮面板热键（Ctrl+Alt+F10）
+; 启用游戏内悬浮面板热键（Ctrl+Alt+F11）
 ; 1 = 可在游戏内呼出面板（默认）
 ; 0 = 关闭面板热键（下方其它热键仍可用）
 EnableUi = 1
@@ -104,8 +104,8 @@ KeyToggleMode = 35
 KeyScaleUp = 33
 KeyScaleDown = 34
 
-; 悬浮面板组合键的基础键（Ctrl+Alt+<此键>），默认 F10 = 121
-KeyToggleUI = 121
+; 悬浮面板组合键的基础键（Ctrl+Alt+<此键>），默认 F11 = 122
+KeyToggleUI = 122
 ```
 
 各配置项速览：
@@ -125,7 +125,7 @@ KeyToggleUI = 121
 | `KeyToggleMode` | VK 码 | 35 | 切换重建模式 |
 | `KeyScaleUp` | VK 码 | 33 | 提高缩放（+5%） |
 | `KeyScaleDown` | VK 码 | 34 | 降低缩放（-5%） |
-| `KeyToggleUI` | VK 码 | 121 | 面板组合键基础键（F10） |
+| `KeyToggleUI` | VK 码 | 122 | 面板组合键基础键（F11） |
 
 ---
 
@@ -138,11 +138,11 @@ KeyToggleUI = 121
 - **分段（Segment）**——重建模式：匹配残差 Matched Residual / 双线性 Bilinear。
 - **按键行（Key rows）**——展示热键组合；独立控制台还支持**点击按键行后按下新键来改绑**（Esc 取消）。
 - 任何修改都会**自动保存**到 `nvngx_dlssnr.ini`；游戏运行期间还会推送到共享内存，**实时生效**。
-- **GitHub 行**——点击面板底部的 `GitHub` 链接即可在浏览器中打开项目主页（<https://github.com/suviland/DLSSNR-Cost-Scaler-CN>）。
+- **GitHub 行**——点击面板底部的 `GitHub` 链接即可在浏览器中打开项目主页（<https://github.com/suviland/DLSSNR-Cost-Scaler-panel>）。
 
 ### 游戏内（代理 DLL）
 
-- 按 `Ctrl+Alt+F10`（`KeyToggleUI`）显示/隐藏面板。它是一个**无边框置顶工具窗**——显示时会**主动夺取前台焦点**，以便鼠标能在游戏上方正常点击；标题栏可拖到任意位置，点 `×` 再次隐藏（焦点交还游戏）。
+- 按 `Ctrl+Alt+F11`（`KeyToggleUI`）显示/隐藏面板。它是一个**无边框置顶工具窗**——显示时会**主动夺取前台焦点**，以便鼠标能在游戏上方正常点击；标题栏可拖到任意位置，点 `×` 再次隐藏（焦点交还游戏）。
 - 即使 `EnableHotkeys = 0` 也照常可用；如需彻底关闭，请设 `EnableUi = 0`。
 
 ### 独立控制台（`dlssnr_console.exe`）
@@ -169,7 +169,7 @@ KeyToggleUI = 121
 
 | 组合键 | 作用 |
 |---|---|
-| `Ctrl + Alt + F10` | 开关悬浮面板（独立于 `EnableHotkeys`，由 `EnableUi` 控制） |
+| `Ctrl + Alt + F11` | 开关悬浮面板（独立于 `EnableHotkeys`，由 `EnableUi` 控制） |
 | `Ctrl + Alt + Space` | 开关代理（缩放代理 ↔ 原生直通） |
 | `Ctrl + Alt + End` | 切换重建模式：匹配残差（1）↔ 双线性（0） |
 | `Ctrl + Alt + PageUp` | 分辨率缩放 +5% |
@@ -192,6 +192,7 @@ KeyToggleUI = 121
 
 ## 致谢
 
+- [xenmods / DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) —— 本项目原作者；本仓库（图形面板、独立控制台与双语文档）均基于其工作衍生。
 - [Dagherbou / OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR) —— DLSS-NR 集成的先驱，提出匹配残差合成思路与特性生命周期处理。
 - [OptiScaler](https://github.com/optiscaler/OptiScaler) —— 上游超分辨率框架。
 - [clshortfuse / RenoDX](https://github.com/clshortfuse/renodx) —— RenoDX 框架与 DLSS ReShade 插件。

@@ -25,7 +25,7 @@ using namespace dlssnr_ui;
 // ===========================================================================
 static UiValues        s_cfg;
 static wchar_t         s_iniPath[MAX_PATH] = { 0 };
-static const wchar_t*  kFooter = L"修改后自动保存 · Ctrl+Alt+F10 也能在游戏里呼出面板";
+static const wchar_t*  kFooter = L"修改后自动保存 · Ctrl+Alt+F11 也能在游戏里呼出面板";
 
 // ===========================================================================
 // Shared memory (inter-process, mirrors DlssnrSharedConfig)
@@ -76,7 +76,7 @@ static void LoadIni() {
     s_cfg.keyToggleMode  = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   s_iniPath);
     s_cfg.keyScaleUp     = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, s_iniPath);
     s_cfg.keyScaleDown   = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  s_iniPath);
-    s_cfg.keyToggleUi    = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F10, s_iniPath);
+    s_cfg.keyToggleUi    = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F11, s_iniPath);
 
     ClampAll();
 }

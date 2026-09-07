@@ -142,7 +142,7 @@ static DWORD WINAPI UiThreadProc(LPVOID) {
         SetEvent(g_readyEvent);
         return 1;
     }
-    g_panel.Init(PanelOpts{ true, false, L"Ctrl+Alt+F10 隐藏面板 · Hide panel" });
+    g_panel.Init(PanelOpts{ true, false, L"Ctrl+Alt+F11 隐藏面板 · Hide panel" });
     g_panel.W = kClientW;
     RECT cr; GetClientRect(g_wnd, &cr);
     g_panel.H = cr.bottom;

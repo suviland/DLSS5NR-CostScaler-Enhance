@@ -24,6 +24,6 @@ struct DlssnrSharedConfig {
     uint32_t keyScaleDown;
     uint32_t writerSource;     // 1 = Companion UI, 2 = Proxy/Hotkey, 3 = Disk INI
     uint32_t enableUi;         // 1 = overlay panel hotkey enabled (default 1)
-    uint32_t keyToggleUi;      // base key for Ctrl+Alt+<key> overlay toggle (default VK_F10)
+    uint32_t keyToggleUi;      // base key for Ctrl+Alt+<key> overlay toggle (default VK_F11)
 };
 #pragma pack(pop)

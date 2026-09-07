@@ -19,7 +19,7 @@ Tested specifically with clshortfuse's DLSS addon (`renodx-dlss.addon64`), but a
 - Integrated AMD RCAS (Robust Contrast Adaptive Sharpening) pass.
 - In-game hot-reloading: changes made to `nvngx_dlssnr.ini` take effect within one second without restarting.
 - In-game hotkeys for live toggling, mode switching, and scale adjustments.
-- **In-game overlay panel**: press `Ctrl+Alt+F10` to summon a bilingual topmost panel for mouse-driven adjustments (drag sliders, click presets/segments, toggle switches) while the game keeps running.
+- **In-game overlay panel**: press `Ctrl+Alt+F11` to summon a bilingual topmost panel for mouse-driven adjustments (drag sliders, click presets/segments, toggle switches) while the game keeps running.
 - **Standalone console EXE**: `dlssnr_console.exe` edits the same settings from outside the game (INI + live shared-memory sync).
 - Handles SDR (B8G8R8A8 / R8G8B8A8), HDR10 PQ (R10G10B10A2), scRGB (R16G16B16A16_FLOAT), and 3-channel HDR (R11G11B10_FLOAT).
 - Dynamic subrect tracking preserves viewport offsets for games using Dynamic Resolution Scaling (DRS).
@@ -44,7 +44,7 @@ Tested specifically with clshortfuse's DLSS addon (`renodx-dlss.addon64`), but a
 3. Copy the proxy `nvngx_dlssnr.dll` and `nvngx_dlssnr.ini` from the release into that same folder.
 4. *(Optional)* Copy `dlssnr_console.exe` into the same folder to tune settings from outside the game.
 5. *(Optional for ReShade users)*: Copy `dlssnr-companion.addon64` into your game folder to get a live configuration overlay under the ReShade Home menu.
-6. Launch the game. Press `Ctrl+Alt+F10` in-game (or run `dlssnr_console.exe`) to open the configuration panel.
+6. Launch the game. Press `Ctrl+Alt+F11` in-game (or run `dlssnr_console.exe`) to open the configuration panel.
 
 ---
 
@@ -87,7 +87,7 @@ Sharpness = 0.20
 ; Enable in-game hotkeys
 EnableHotkeys = 1
 
-; Enable the in-game overlay panel hotkey (Ctrl+Alt+F10)
+; Enable the in-game overlay panel hotkey (Ctrl+Alt+F11)
 EnableUi = 1
 
 [Hotkeys]
@@ -102,8 +102,8 @@ KeyToggleMode = 35
 KeyScaleUp = 33
 KeyScaleDown = 34
 
-; Base key of the overlay panel combo (Ctrl+Alt+<key>), default F10 = 121
-KeyToggleUI = 121
+; Base key of the overlay panel combo (Ctrl+Alt+<key>), default F11 = 122
+KeyToggleUI = 122
 ```
 
 ---
@@ -117,11 +117,11 @@ Both UIs share the same bilingual layout (Chinese primary / English secondary) a
 - **Segment** — resolve mode (匹配残差 Matched Residual / 双线性 Bilinear).
 - **Key rows** — display the hotkey combos (the console EXE also lets you rebind them by clicking a row and pressing a key; Esc cancels).
 - Every change is **auto-saved** to `nvngx_dlssnr.ini` and, while the game is running, pushed to the shared-memory config so it applies live.
-- **GitHub row** — click the `GitHub` link at the bottom of the panel to open the project homepage (<https://github.com/suviland/DLSSNR-Cost-Scaler-CN>) in your browser.
+- **GitHub row** — click the `GitHub` link at the bottom of the panel to open the project homepage (<https://github.com/suviland/DLSSNR-Cost-Scaler-panel>) in your browser.
 
 ### In-game (proxy DLL)
 
-- Press `Ctrl+Alt+F10` (`KeyToggleUI`) to show/hide the panel. It is a borderless topmost tool window; when shown it **takes foreground focus** so it can be clicked normally over the game, the header can be dragged anywhere, and the `×` hides it again (focus returns to the game).
+- Press `Ctrl+Alt+F11` (`KeyToggleUI`) to show/hide the panel. It is a borderless topmost tool window; when shown it **takes foreground focus** so it can be clicked normally over the game, the header can be dragged anywhere, and the `×` hides it again (focus returns to the game).
 - Works even when `EnableHotkeys = 0`; disable it entirely with `EnableUi = 0`.
 
 ### Standalone console (`dlssnr_console.exe`)
@@ -146,7 +146,7 @@ If using ReShade, drop `dlssnr-companion.addon64` into your game directory along
 
 When `EnableHotkeys = 1`, the default shortcuts are:
 
-- `Ctrl + Alt + F10` — Toggle the overlay panel (independent of `EnableHotkeys`; gated by `EnableUi`).
+- `Ctrl + Alt + F11` — Toggle the overlay panel (independent of `EnableHotkeys`; gated by `EnableUi`).
 - `Ctrl + Alt + Space` — Toggle proxy ON / OFF (switches between scaled proxy and native passthrough).
 - `Ctrl + Alt + End` — Toggle EnlargementMode between Matched Residual (`1`) and Bilinear (`0`).
 - `Ctrl + Alt + PageUp` — Increase resolution scale by +5%.
@@ -169,6 +169,7 @@ To build:
 
 ## Credits
 
+- [xenmods / DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) — Original author of this project; this fork (GUI panel, standalone console, and bilingual docs) is built upon their work.
 - [Dagherbou / OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR) — For pioneering DLSS-NR integration, the matched residual resolve concept, and feature lifecycle handling.
 - [OptiScaler](https://github.com/optiscaler/OptiScaler) — For the parent upscaler framework.
 - [clshortfuse / RenoDX](https://github.com/clshortfuse/renodx) — For the RenoDX framework and DLSS ReShade addon.
