@@ -1,5 +1,7 @@
 # DLSSNR-Cost-Scaler
 
+> Language: English | [简体中文](README-CN.md)
+
 A standalone proxy DLL for NVIDIA DLSS-NR (DirectX 12) that adds resolution scaling and cost control. It runs the neural reconstruction model at a reduced resolution while keeping native 1:1 geometry, fine textures, text, and edges intact using a high-frequency matched residual composite shader.
 
 Designed primarily to work alongside RenoDX addons, this proxy decouples DLSS-NR's GPU performance cost from the display resolution without introducing blur.
@@ -17,6 +19,8 @@ Tested specifically with clshortfuse's DLSS addon (`renodx-dlss.addon64`), but a
 - Integrated AMD RCAS (Robust Contrast Adaptive Sharpening) pass.
 - In-game hot-reloading: changes made to `nvngx_dlssnr.ini` take effect within one second without restarting.
 - In-game hotkeys for live toggling, mode switching, and scale adjustments.
+- **In-game overlay panel**: press `Ctrl+Alt+F10` to summon a bilingual topmost panel for mouse-driven adjustments (drag sliders, click presets/segments, toggle switches) while the game keeps running.
+- **Standalone console EXE**: `dlssnr_console.exe` edits the same settings from outside the game (INI + live shared-memory sync).
 - Handles SDR (B8G8R8A8 / R8G8B8A8), HDR10 PQ (R10G10B10A2), scRGB (R16G16B16A16_FLOAT), and 3-channel HDR (R11G11B10_FLOAT).
 - Dynamic subrect tracking preserves viewport offsets for games using Dynamic Resolution Scaling (DRS).
 
@@ -38,8 +42,9 @@ Tested specifically with clshortfuse's DLSS addon (`renodx-dlss.addon64`), but a
    nvngx_dlssnr_real.dll
    ```
 3. Copy the proxy `nvngx_dlssnr.dll` and `nvngx_dlssnr.ini` from the release into that same folder.
-4. *(Optional for ReShade users)*: Copy `dlssnr-companion.addon64` into your game folder to get a live configuration overlay under the ReShade Home menu.
-5. Launch the game.
+4. *(Optional)* Copy `dlssnr_console.exe` into the same folder to tune settings from outside the game.
+5. *(Optional for ReShade users)*: Copy `dlssnr-companion.addon64` into your game folder to get a live configuration overlay under the ReShade Home menu.
+6. Launch the game. Press `Ctrl+Alt+F10` in-game (or run `dlssnr_console.exe`) to open the configuration panel.
 
 ---
 
@@ -64,12 +69,17 @@ EnableProxy = 1
 ResolutionScale = 0.75
 
 ; Resolve algorithm
-; 1 = Matched Residual (retains native 1:1 detail + neural lighting delta)
-; 0 = Classic Bilinear (stretched upscale, for comparison/debugging)
+; 1 = Matched Residual (1:1 Native Anchor + Neural Detail Transfer, Ultra Crisp, Recommended)
+; 0 = Direct Neural Reconstruction Bilinear + RCAS
 EnlargementMode = 1
 
 ; Strength of the neural detail transfer (0.0 to 2.0, default 1.0)
 TransferStrength = 1.00
+
+; Neural color/tint transfer strength (0.0 to 1.0, default 1.0)
+; 1.00 = Full neural color transfer
+; 0.00 = Luminance-only transfer (eliminates neural color shifts/tint while keeping full lighting and detail)
+ColorStrength = 1.00
 
 ; Contrast-adaptive edge sharpening (0.0 to 1.0, default 0.0)
 Sharpness = 0.20
@@ -77,17 +87,48 @@ Sharpness = 0.20
 ; Enable in-game hotkeys
 EnableHotkeys = 1
 
+; Enable the in-game overlay panel hotkey (Ctrl+Alt+F10)
+EnableUi = 1
+
 [Hotkeys]
 ; Require Ctrl + Alt modifiers held down with the hotkey (1 = yes, 0 = no)
 RequireCtrlAlt = 1
 
 ; Virtual-Key codes (Decimal):
 ; Space=32, PageUp=33, PageDown=34, End=35, Home=36, Insert=45, Delete=46
+; F1-F12 = 112-123, 0-9 = 48-57, A-Z = 65-90
 KeyToggleProxy = 32
 KeyToggleMode = 35
 KeyScaleUp = 33
 KeyScaleDown = 34
+
+; Base key of the overlay panel combo (Ctrl+Alt+<key>), default F10 = 121
+KeyToggleUI = 121
 ```
+
+---
+
+## In-Game Overlay Panel & Standalone Console
+
+Both UIs share the same bilingual layout (Chinese primary / English secondary) and are fully mouse-driven:
+
+- **Switch** — toggle proxy / hotkeys / panel hotkey.
+- **Slider + presets** — resolution scale with quick chips (100 / 85 / 80 / 75 / 67 / 50 %) and a fine slider.
+- **Segment** — resolve mode (匹配残差 Matched Residual / 双线性 Bilinear).
+- **Key rows** — display the hotkey combos (the console EXE also lets you rebind them by clicking a row and pressing a key; Esc cancels).
+- Every change is **auto-saved** to `nvngx_dlssnr.ini` and, while the game is running, pushed to the shared-memory config so it applies live.
+- **GitHub row** — click the `GitHub` link at the bottom of the panel to open the project homepage (<https://github.com/suviland/DLSSNR-Cost-Scaler-CN>) in your browser.
+
+### In-game (proxy DLL)
+
+- Press `Ctrl+Alt+F10` (`KeyToggleUI`) to show/hide the panel. It is a borderless topmost tool window; when shown it **takes foreground focus** so it can be clicked normally over the game, the header can be dragged anywhere, and the `×` hides it again (focus returns to the game).
+- Works even when `EnableHotkeys = 0`; disable it entirely with `EnableUi = 0`.
+
+### Standalone console (`dlssnr_console.exe`)
+
+- Place it in the same folder as `nvngx_dlssnr.ini` and run it (game may be running or not).
+- When the game is not running it edits the INI for the next launch; when the game is running the panel stays live-synced with the in-game overlay/hotkeys through shared memory.
+- Click the header `×` or press `Esc` to exit.
 
 ---
 
@@ -105,6 +146,7 @@ If using ReShade, drop `dlssnr-companion.addon64` into your game directory along
 
 When `EnableHotkeys = 1`, the default shortcuts are:
 
+- `Ctrl + Alt + F10` — Toggle the overlay panel (independent of `EnableHotkeys`; gated by `EnableUi`).
 - `Ctrl + Alt + Space` — Toggle proxy ON / OFF (switches between scaled proxy and native passthrough).
 - `Ctrl + Alt + End` — Toggle EnlargementMode between Matched Residual (`1`) and Bilinear (`0`).
 - `Ctrl + Alt + PageUp` — Increase resolution scale by +5%.
@@ -120,8 +162,8 @@ Prerequisites:
 
 To build:
 1. Open the project folder.
-2. Run `build.bat` from an x64 Developer Command Prompt or standard prompt.
-3. The compiled `nvngx_dlssnr.dll` will be generated in the root folder.
+2. Run `build.bat` from an x64 Developer Command Prompt or standard prompt (it auto-locates vcvars64 / fxc when installed in the default locations).
+3. The compiled outputs are generated in the root folder: `nvngx_dlssnr.dll` (proxy, includes the in-game overlay) and `dlssnr_console.exe` (standalone console).
 
 ---
 

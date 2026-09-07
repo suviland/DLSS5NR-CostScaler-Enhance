@@ -79,6 +79,8 @@ static int   s_keyToggleProxy   = VK_SPACE;
 static int   s_keyToggleMode    = VK_END;
 static int   s_keyScaleUp       = VK_PRIOR;
 static int   s_keyScaleDown     = VK_NEXT;
+static bool  s_enableUi         = true;   // proxy overlay panel hotkey (Ctrl+Alt+F10)
+static int   s_keyToggleUi      = VK_F10; // base key of the overlay combo
 
 // Debounce & Notification State
 static bool      s_dirty          = false;
@@ -124,6 +126,8 @@ static void InitSharedMemory() {
                 g_sharedConfig->keyToggleMode = s_keyToggleMode;
                 g_sharedConfig->keyScaleUp = s_keyScaleUp;
                 g_sharedConfig->keyScaleDown = s_keyScaleDown;
+                g_sharedConfig->enableUi = s_enableUi ? 1 : 0;
+                g_sharedConfig->keyToggleUi = s_keyToggleUi;
                 g_sharedConfig->writerSource = 1;
                 s_lastCompanionVersion = 1;
             } else {
@@ -158,6 +162,8 @@ static void PushToSharedMemory(uint32_t source) {
     g_sharedConfig->keyToggleMode = s_keyToggleMode;
     g_sharedConfig->keyScaleUp = s_keyScaleUp;
     g_sharedConfig->keyScaleDown = s_keyScaleDown;
+    g_sharedConfig->enableUi = s_enableUi ? 1 : 0;
+    g_sharedConfig->keyToggleUi = s_keyToggleUi;
     g_sharedConfig->writerSource = source;
     g_sharedConfig->version++;
     s_lastCompanionVersion = g_sharedConfig->version;
@@ -180,6 +186,8 @@ static void PullFromSharedMemory() {
         s_keyToggleMode = g_sharedConfig->keyToggleMode;
         s_keyScaleUp = g_sharedConfig->keyScaleUp;
         s_keyScaleDown = g_sharedConfig->keyScaleDown;
+        s_enableUi = (g_sharedConfig->enableUi != 0);
+        s_keyToggleUi = g_sharedConfig->keyToggleUi;
         s_lastCompanionVersion = g_sharedConfig->version;
 
         std::wstring iniPath = GetIniFilePath();
@@ -232,11 +240,13 @@ static void LoadIniSettings() {
     s_sharpness = sVal;
 
     s_enableHotkeys  = (GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableHotkeys", 1, iniPath.c_str()) != 0);
+    s_enableUi       = (GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableUi", 1, iniPath.c_str()) != 0);
     s_requireCtrlAlt = (GetPrivateProfileIntW(L"Hotkeys", L"RequireCtrlAlt", 1, iniPath.c_str()) != 0);
     s_keyToggleProxy = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleProxy", VK_SPACE, iniPath.c_str());
     s_keyToggleMode  = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   iniPath.c_str());
     s_keyScaleUp     = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, iniPath.c_str());
     s_keyScaleDown   = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  iniPath.c_str());
+    s_keyToggleUi    = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F10, iniPath.c_str());
 }
 
 static void SaveIniSettings() {

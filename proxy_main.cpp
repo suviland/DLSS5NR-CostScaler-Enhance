@@ -16,6 +16,7 @@
 #include "Downsample_Shader.h"
 #include "Resolve_Shader.h"
 #include "dlssnr_shared.h"
+#include "proxy_ui.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -65,12 +66,14 @@ static std::atomic<uint32_t> g_enlargementMode(1);     // 1 = Matched Residual, 
 static std::atomic<float>    g_transferStrength(1.0f); // 0.0 to 2.0
 static std::atomic<float>    g_sharpness(0.20f);       // 0.0 to 1.0 (RCAS)
 static std::atomic<float>    g_colorStrength(1.00f);   // 0.0 to 1.0 (Issue #5)
-static bool                  g_enableHotkeys = true;
-static bool                  g_requireCtrlAlt = true;
-static int                   g_keyToggleProxy = VK_SPACE;
-static int                   g_keyToggleMode  = VK_END;
-static int                   g_keyScaleUp     = VK_PRIOR;
-static int                   g_keyScaleDown   = VK_NEXT;
+static std::atomic<bool>     g_enableHotkeys(true);
+static std::atomic<bool>     g_requireCtrlAlt(true);
+static std::atomic<int>      g_keyToggleProxy(VK_SPACE);
+static std::atomic<int>      g_keyToggleMode(VK_END);
+static std::atomic<int>      g_keyScaleUp(VK_PRIOR);
+static std::atomic<int>      g_keyScaleDown(VK_NEXT);
+static std::atomic<bool>     g_enableUi(true);       // allow Ctrl+Alt+F10 overlay toggle
+static std::atomic<int>      g_keyToggleUI(VK_F10);  // base key of the overlay toggle combo
 static wchar_t               g_iniPath[MAX_PATH] = { 0 };
 static FILETIME              g_lastIniWriteTime = { 0 };
 
@@ -78,22 +81,43 @@ static HANDLE              g_hProxySharedMem = nullptr;
 static DlssnrSharedConfig* g_proxySharedConfig = nullptr;
 static uint32_t            s_lastProxySharedVersion = 0;
 
+// Serialises INI persistence + shared-memory pushes between the render thread
+// (hotkeys / hot-reload) and the overlay UI thread (panel commits).
+static std::recursive_mutex g_cfgLock;
+
+static void PushProxyToSharedMemory();   // defined below — used to seed a fresh mapping
+
 static void InitProxySharedMemory() {
     if (g_proxySharedConfig) return;
     g_hProxySharedMem = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DlssnrSharedConfig), DLSSNR_SHARED_MEM_NAME);
     if (g_hProxySharedMem) {
+        DWORD createErr = GetLastError();
         g_proxySharedConfig = (DlssnrSharedConfig*)MapViewOfFile(g_hProxySharedMem, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(DlssnrSharedConfig));
+        if (g_proxySharedConfig && (createErr != ERROR_ALREADY_EXISTS || g_proxySharedConfig->magic != DLSSNR_MAGIC)) {
+            // We own a fresh or stale/unseeded mapping — seed it from the live
+            // atomics so a standalone console / companion launched later always
+            // finds valid data (and UI commits that happened before any feature
+            // call are not lost).
+            ZeroMemory(g_proxySharedConfig, sizeof(DlssnrSharedConfig));
+            g_proxySharedConfig->magic = DLSSNR_MAGIC;
+            PushProxyToSharedMemory();
+        }
     }
 }
 
-static void SaveConfigValue(const wchar_t* key, const wchar_t* value) {
+static void SaveConfigValueEx(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
     if (g_iniPath[0] == L'\0') return;
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", key, value, g_iniPath);
+    std::lock_guard<std::recursive_mutex> cfgLock(g_cfgLock);
+    WritePrivateProfileStringW(section, key, value, g_iniPath);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, g_iniPath);
     WIN32_FILE_ATTRIBUTE_DATA fileInfo;
     if (GetFileAttributesExW(g_iniPath, GetFileExInfoStandard, &fileInfo)) {
         g_lastIniWriteTime = fileInfo.ftLastWriteTime;
     }
+}
+
+static void SaveConfigValue(const wchar_t* key, const wchar_t* value) {
+    SaveConfigValueEx(L"DLSSNR_Proxy", key, value);
 }
 
 static void PushProxyToSharedMemory();
@@ -128,7 +152,8 @@ static void LoadConfig() {
     g_scale.store(val);
 
     g_enableProxy.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableProxy", 1, g_iniPath) != 0);
-    g_enableHotkeys = (GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableHotkeys", 1, g_iniPath) != 0);
+    g_enableHotkeys.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableHotkeys", 1, g_iniPath) != 0);
+    g_enableUi.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableUi", 1, g_iniPath) != 0);
 
     g_enlargementMode.store((uint32_t)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnlargementMode", 1, g_iniPath));
 
@@ -153,35 +178,131 @@ static void LoadConfig() {
     if (cVal > 1.0f) cVal = 1.0f;
     g_colorStrength.store(cVal);
 
-    g_requireCtrlAlt = (GetPrivateProfileIntW(L"Hotkeys", L"RequireCtrlAlt", 1, g_iniPath) != 0);
-    g_keyToggleProxy = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleProxy", VK_SPACE, g_iniPath);
-    g_keyToggleMode  = GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   g_iniPath);
-    g_keyScaleUp     = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, g_iniPath);
-    g_keyScaleDown   = GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  g_iniPath);
+    g_requireCtrlAlt.store(GetPrivateProfileIntW(L"Hotkeys", L"RequireCtrlAlt", 1, g_iniPath) != 0);
+    g_keyToggleProxy.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleProxy", VK_SPACE, g_iniPath));
+    g_keyToggleMode.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   g_iniPath));
+    g_keyScaleUp.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, g_iniPath));
+    g_keyScaleDown.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  g_iniPath));
+    g_keyToggleUI.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F10, g_iniPath));
 
-    Log("[Proxy] Config loaded: EnableProxy = %d, ResolutionScale = %.2f, EnlargementMode = %u, TransferStrength = %.2f, Sharpness = %.2f, ColorStrength = %.2f, EnableHotkeys = %d",
-        g_enableProxy.load() ? 1 : 0, val, g_enlargementMode.load(), g_transferStrength.load(), g_sharpness.load(), g_colorStrength.load(), g_enableHotkeys ? 1 : 0);
+    Log("[Proxy] Config loaded: EnableProxy = %d, ResolutionScale = %.2f, EnlargementMode = %u, TransferStrength = %.2f, Sharpness = %.2f, ColorStrength = %.2f, EnableHotkeys = %d, EnableUi = %d",
+        g_enableProxy.load() ? 1 : 0, val, g_enlargementMode.load(), g_transferStrength.load(), g_sharpness.load(), g_colorStrength.load(), g_enableHotkeys.load() ? 1 : 0, g_enableUi.load() ? 1 : 0);
 
     PushProxyToSharedMemory();
 }
 
 static void PushProxyToSharedMemory() {
     if (!g_proxySharedConfig || g_proxySharedConfig->magic != DLSSNR_MAGIC) return;
+    std::lock_guard<std::recursive_mutex> cfgLock(g_cfgLock);
     g_proxySharedConfig->enableProxy = g_enableProxy.load() ? 1 : 0;
     g_proxySharedConfig->resolutionScale = g_scale.load();
     g_proxySharedConfig->enlargementMode = g_enlargementMode.load();
     g_proxySharedConfig->transferStrength = g_transferStrength.load();
     g_proxySharedConfig->colorStrength = g_colorStrength.load();
     g_proxySharedConfig->sharpness = g_sharpness.load();
-    g_proxySharedConfig->enableHotkeys = g_enableHotkeys ? 1 : 0;
-    g_proxySharedConfig->requireCtrlAlt = g_requireCtrlAlt ? 1 : 0;
-    g_proxySharedConfig->keyToggleProxy = g_keyToggleProxy;
-    g_proxySharedConfig->keyToggleMode = g_keyToggleMode;
-    g_proxySharedConfig->keyScaleUp = g_keyScaleUp;
-    g_proxySharedConfig->keyScaleDown = g_keyScaleDown;
+    g_proxySharedConfig->enableHotkeys = g_enableHotkeys.load() ? 1 : 0;
+    g_proxySharedConfig->requireCtrlAlt = g_requireCtrlAlt.load() ? 1 : 0;
+    g_proxySharedConfig->keyToggleProxy = g_keyToggleProxy.load();
+    g_proxySharedConfig->keyToggleMode = g_keyToggleMode.load();
+    g_proxySharedConfig->keyScaleUp = g_keyScaleUp.load();
+    g_proxySharedConfig->keyScaleDown = g_keyScaleDown.load();
+    g_proxySharedConfig->enableUi = g_enableUi.load() ? 1 : 0;
+    g_proxySharedConfig->keyToggleUi = g_keyToggleUI.load();
     g_proxySharedConfig->writerSource = 2; // Proxy/Hotkey
     g_proxySharedConfig->version++;
     s_lastProxySharedVersion = g_proxySharedConfig->version;
+}
+
+// ---------------------------------------------------------------------------
+// Overlay UI <-> live config bridge (callbacks run on the overlay UI thread).
+// All fields are std::atomic so cross-thread access stays race-free.
+// ---------------------------------------------------------------------------
+static void UiPullConfig(dlssnr_ui::UiValues& out, void*) {
+    out.enableProxy    = g_enableProxy.load();
+    out.scale          = g_scale.load();
+    out.mode           = (int)g_enlargementMode.load();
+    out.transfer       = g_transferStrength.load();
+    out.color          = g_colorStrength.load();
+    out.sharpness      = g_sharpness.load();
+    out.enableHotkeys  = g_enableHotkeys.load();
+    out.requireCtrlAlt = g_requireCtrlAlt.load();
+    out.enableUi       = g_enableUi.load();
+    out.keyToggleProxy = g_keyToggleProxy.load();
+    out.keyToggleMode  = g_keyToggleMode.load();
+    out.keyScaleUp     = g_keyScaleUp.load();
+    out.keyScaleDown   = g_keyScaleDown.load();
+    out.keyToggleUi    = g_keyToggleUI.load();
+}
+
+static void UiApplyLive(const dlssnr_ui::UiValues& v, int field, void*) {
+    switch ((dlssnr_ui::Field)field) {
+    case dlssnr_ui::F_ENABLE_PROXY: g_enableProxy.store(v.enableProxy); break;
+    case dlssnr_ui::F_SCALE:        g_scale.store(v.scale); break;
+    case dlssnr_ui::F_MODE:         g_enlargementMode.store((uint32_t)v.mode); break;
+    case dlssnr_ui::F_TRANSFER:     g_transferStrength.store(v.transfer); break;
+    case dlssnr_ui::F_COLOR:        g_colorStrength.store(v.color); break;
+    case dlssnr_ui::F_SHARP:        g_sharpness.store(v.sharpness); break;
+    case dlssnr_ui::F_ENABLE_HOTKEYS: g_enableHotkeys.store(v.enableHotkeys); break;
+    case dlssnr_ui::F_REQUIRE_CTRLALT: g_requireCtrlAlt.store(v.requireCtrlAlt); break;
+    case dlssnr_ui::F_ENABLE_UI:    g_enableUi.store(v.enableUi); break;
+    case dlssnr_ui::F_KEY_TOGGLE_PROXY: g_keyToggleProxy.store(v.keyToggleProxy); break;
+    case dlssnr_ui::F_KEY_TOGGLE_MODE:  g_keyToggleMode.store(v.keyToggleMode); break;
+    case dlssnr_ui::F_KEY_SCALEUP:      g_keyScaleUp.store(v.keyScaleUp); break;
+    case dlssnr_ui::F_KEY_SCALEDOWN:    g_keyScaleDown.store(v.keyScaleDown); break;
+    case dlssnr_ui::F_KEY_TOGGLEUI:     g_keyToggleUI.store(v.keyToggleUi); break;
+    default: break;
+    }
+}
+
+static void UiCommitConfig(const dlssnr_ui::UiValues& v, void*) {
+    // Mirror every field into the live atomics first (keeps behaviour identical
+    // whether the edit arrived via applyLive or directly through commit).
+    g_enableProxy.store(v.enableProxy);
+    g_scale.store(v.scale);
+    g_enlargementMode.store((uint32_t)v.mode);
+    g_transferStrength.store(v.transfer);
+    g_colorStrength.store(v.color);
+    g_sharpness.store(v.sharpness);
+    g_enableHotkeys.store(v.enableHotkeys);
+    g_requireCtrlAlt.store(v.requireCtrlAlt);
+    g_enableUi.store(v.enableUi);
+    g_keyToggleProxy.store(v.keyToggleProxy);
+    g_keyToggleMode.store(v.keyToggleMode);
+    g_keyScaleUp.store(v.keyScaleUp);
+    g_keyScaleDown.store(v.keyScaleDown);
+    g_keyToggleUI.store(v.keyToggleUi);
+
+    // Persist to the INI (sections match LoadConfig) then push to shared memory.
+    wchar_t buf[32];
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableProxy", v.enableProxy ? L"1" : L"0");
+    swprintf_s(buf, L"%.2f", v.scale);             SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScale", buf);
+    swprintf_s(buf, L"%u", (uint32_t)v.mode);      SaveConfigValueEx(L"DLSSNR_Proxy", L"EnlargementMode", buf);
+    swprintf_s(buf, L"%.2f", v.transfer);          SaveConfigValueEx(L"DLSSNR_Proxy", L"TransferStrength", buf);
+    swprintf_s(buf, L"%.2f", v.color);             SaveConfigValueEx(L"DLSSNR_Proxy", L"ColorStrength", buf);
+    swprintf_s(buf, L"%.2f", v.sharpness);         SaveConfigValueEx(L"DLSSNR_Proxy", L"Sharpness", buf);
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableHotkeys", v.enableHotkeys ? L"1" : L"0");
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableUi", v.enableUi ? L"1" : L"0");
+    SaveConfigValueEx(L"Hotkeys", L"RequireCtrlAlt", v.requireCtrlAlt ? L"1" : L"0");
+    swprintf_s(buf, L"%d", v.keyToggleProxy); SaveConfigValueEx(L"Hotkeys", L"KeyToggleProxy", buf);
+    swprintf_s(buf, L"%d", v.keyToggleMode);  SaveConfigValueEx(L"Hotkeys", L"KeyToggleMode", buf);
+    swprintf_s(buf, L"%d", v.keyScaleUp);     SaveConfigValueEx(L"Hotkeys", L"KeyScaleUp", buf);
+    swprintf_s(buf, L"%d", v.keyScaleDown);   SaveConfigValueEx(L"Hotkeys", L"KeyScaleDown", buf);
+    swprintf_s(buf, L"%d", v.keyToggleUi);    SaveConfigValueEx(L"Hotkeys", L"KeyToggleUI", buf);
+    PushProxyToSharedMemory();
+    Log("[Proxy] Overlay UI committed settings to INI + shared memory");
+}
+
+static dlssnr_ui::PanelHooks g_uiHooks;
+static bool g_uiHooksRegistered = false;
+
+static void EnsureUiHooksRegistered() {
+    if (g_uiHooksRegistered) return;
+    g_uiHooks.user = nullptr;
+    g_uiHooks.pull = UiPullConfig;
+    g_uiHooks.applyLive = UiApplyLive;
+    g_uiHooks.commit = UiCommitConfig;
+    dlssnr_proxyui::OverlaySetHooks(g_uiHooks);
+    g_uiHooksRegistered = true;
 }
 
 static void CheckConfigHotReload() {
@@ -196,12 +317,14 @@ static void CheckConfigHotReload() {
                 g_transferStrength.store(g_proxySharedConfig->transferStrength);
                 g_colorStrength.store(g_proxySharedConfig->colorStrength);
                 g_sharpness.store(g_proxySharedConfig->sharpness);
-                g_enableHotkeys = (g_proxySharedConfig->enableHotkeys != 0);
-                g_requireCtrlAlt = (g_proxySharedConfig->requireCtrlAlt != 0);
-                g_keyToggleProxy = g_proxySharedConfig->keyToggleProxy;
-                g_keyToggleMode  = g_proxySharedConfig->keyToggleMode;
-                g_keyScaleUp     = g_proxySharedConfig->keyScaleUp;
-                g_keyScaleDown   = g_proxySharedConfig->keyScaleDown;
+                g_enableHotkeys.store(g_proxySharedConfig->enableHotkeys != 0);
+                g_requireCtrlAlt.store(g_proxySharedConfig->requireCtrlAlt != 0);
+                g_keyToggleProxy.store(g_proxySharedConfig->keyToggleProxy);
+                g_keyToggleMode.store(g_proxySharedConfig->keyToggleMode);
+                g_keyScaleUp.store(g_proxySharedConfig->keyScaleUp);
+                g_keyScaleDown.store(g_proxySharedConfig->keyScaleDown);
+                g_enableUi.store(g_proxySharedConfig->enableUi != 0);
+                g_keyToggleUI.store(g_proxySharedConfig->keyToggleUi);
             }
             s_lastProxySharedVersion = g_proxySharedConfig->version;
         }
@@ -221,14 +344,29 @@ static void CheckConfigHotReload() {
 }
 
 static void CheckHotkeys() {
-    if (!g_enableHotkeys) return;
-
     static ULONGLONG s_lastPress = 0;
     ULONGLONG now = GetTickCount64();
     if (now - s_lastPress < 250) return;
 
+    // UI overlay toggle: Ctrl+Alt+<KeyToggleUI>, independent of EnableHotkeys /
+    // RequireCtrlAlt so the panel can always be summoned while EnableUi is on.
+    if (g_enableUi.load()) {
+        bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+        bool alt  = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        int  uiKey = g_keyToggleUI.load();
+        if (ctrl && alt && uiKey > 0 && (GetAsyncKeyState(uiKey) & 0x8000) != 0) {
+            s_lastPress = now;
+            EnsureUiHooksRegistered();
+            dlssnr_proxyui::OverlayToggle();
+            Log("[Proxy] Hotkey UI toggle pressed (Ctrl+Alt+F10)");
+            return;
+        }
+    }
+
+    if (!g_enableHotkeys.load()) return;
+
     bool modifiersOk = true;
-    if (g_requireCtrlAlt) {
+    if (g_requireCtrlAlt.load()) {
         bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
         bool alt  = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
         modifiersOk = (ctrl && alt);
@@ -236,7 +374,7 @@ static void CheckHotkeys() {
 
     if (modifiersOk) {
         float current = g_scale.load();
-        if ((GetAsyncKeyState(g_keyToggleProxy) & 0x8000) != 0) {
+        if ((GetAsyncKeyState(g_keyToggleProxy.load()) & 0x8000) != 0) {
             bool newState = !g_enableProxy.load();
             g_enableProxy.store(newState);
             wchar_t buf[16];
@@ -246,7 +384,7 @@ static void CheckHotkeys() {
             Log("[Proxy] Hotkey ToggleProxy: Proxy is now %s (synced to INI)", newState ? "ENABLED" : "DISABLED (Native Passthrough)");
             s_lastPress = now;
         }
-        else if ((GetAsyncKeyState(g_keyToggleMode) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyToggleMode.load()) & 0x8000) != 0) {
             uint32_t newMode = (g_enlargementMode.load() == 1) ? 0 : 1;
             g_enlargementMode.store(newMode);
             wchar_t buf[16];
@@ -256,7 +394,7 @@ static void CheckHotkeys() {
             Log("[Proxy] Hotkey ToggleMode: EnlargementMode changed to %s (synced to INI)", newMode == 1 ? "Matched Residual" : "Classic Bilinear");
             s_lastPress = now;
         }
-        else if ((GetAsyncKeyState(g_keyScaleUp) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyScaleUp.load()) & 0x8000) != 0) {
             float next = (float)(floor((current + 0.051f) * 20.0f) / 20.0f);
             if (next > 1.0f) next = 1.0f;
             if (next != current) {
@@ -269,7 +407,7 @@ static void CheckHotkeys() {
                 s_lastPress = now;
             }
         }
-        else if ((GetAsyncKeyState(g_keyScaleDown) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyScaleDown.load()) & 0x8000) != 0) {
             float next = (float)(floor((current - 0.049f) * 20.0f) / 20.0f);
             if (next < 0.25f) next = 0.25f;
             if (next != current) {
@@ -756,6 +894,7 @@ __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_Init_Ext(
     std::lock_guard<std::recursive_mutex> lock(g_proxyMutex);
     EnsureRealModuleLoaded();
     LoadConfig();
+    EnsureUiHooksRegistered(); // make the Ctrl+Alt+F10 overlay panel available
 
     Log("[Proxy] NVSDK_NGX_D3D12_Init_Ext (AppId=0x%llX, Device=%p)", InApplicationId, InDevice);
     if (!real_InitExt) return -1;
@@ -1624,6 +1763,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinstDLL);
     } else if (fdwReason == DLL_PROCESS_DETACH && !lpvReserved) {
+        dlssnr_proxyui::OverlayShutdown(); // stop UI thread + destroy panel window first
         ReleaseD3D12Pipeline();
         for (size_t i = 0; i < MAX_FEATURE_SLOTS; ++i) {
             if (g_slots[i].inUse) {

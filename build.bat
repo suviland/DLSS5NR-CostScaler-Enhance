@@ -13,6 +13,10 @@ if %errorlevel% neq 0 (
         call "C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
     ) else if exist "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" (
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+    ) else if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" (
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+    ) else if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat" (
+        call "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
     ) else if exist "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat" (
         call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
     )
@@ -40,18 +44,39 @@ if errorlevel 1 (
 )
 
 echo Compiling proxy_main.cpp...
-cl.exe /nologo /O2 /Oi /GL /MT /EHsc /std:c++17 /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /c proxy_main.cpp
+cl.exe /nologo /O2 /Oi /GL /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "UNICODE" /D "_UNICODE" /c proxy_main.cpp
+if errorlevel 1 (
+    echo [ERROR] Compilation failed.
+    exit /b 1
+)
+
+echo Compiling proxy_ui.cpp...
+cl.exe /nologo /O2 /Oi /GL /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "UNICODE" /D "_UNICODE" /c proxy_ui.cpp
 if errorlevel 1 (
     echo [ERROR] Compilation failed.
     exit /b 1
 )
 
 echo Linking nvngx_dlssnr.dll...
-link.exe /nologo /DLL /OUT:nvngx_dlssnr.dll proxy_main.obj d3d12.lib dxgi.lib kernel32.lib user32.lib /OPT:REF /OPT:ICF /LTCG
+link.exe /nologo /DLL /OUT:nvngx_dlssnr.dll proxy_main.obj proxy_ui.obj d3d12.lib dxgi.lib kernel32.lib user32.lib gdi32.lib /OPT:REF /OPT:ICF /LTCG
 
 if exist nvngx_dlssnr.dll (
     echo [SUCCESS] Built nvngx_dlssnr.dll
 ) else (
     echo [ERROR] Link failed.
+    exit /b 1
+)
+
+echo Compiling dlssnr_console.exe...
+cl.exe /nologo /O2 /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "UNICODE" /D "_UNICODE" dlssnr_console.cpp /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib /OUT:dlssnr_console.exe
+if errorlevel 1 (
+    echo [ERROR] Console EXE build failed.
+    exit /b 1
+)
+
+if exist dlssnr_console.exe (
+    echo [SUCCESS] Built dlssnr_console.exe
+) else (
+    echo [ERROR] Console EXE link failed.
     exit /b 1
 )
