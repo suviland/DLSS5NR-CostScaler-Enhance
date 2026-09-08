@@ -1,182 +1,153 @@
-# DLSSNR-Cost-Scaler
+# DLSS5-NR-Boost
 
-> Language: English | [简体中文](README-CN.md)
+<p align="center">
+  <a href="README-CN.md"><b>简体中文</b></a> ｜ <b>English</b>
+</p>
 
-A standalone proxy DLL for NVIDIA DLSS-NR (DirectX 12) that adds resolution scaling and cost control. It runs the neural reconstruction model at a reduced resolution while keeping native 1:1 geometry, fine textures, text, and edges intact using a high-frequency matched residual composite shader.
+A standalone proxy DLL and companion toolset for NVIDIA DLSS-NR (DirectX 12) that adds **resolution scaling** and **GPU cost control**. It runs the neural reconstruction model at a reduced resolution while preserving native 1:1 geometry, fine textures, text, and edges via a high-frequency matched-residual composite shader — **decoupling DLSS-NR's GPU cost from the display resolution without introducing blur**.
 
-Designed primarily to work alongside RenoDX addons, this proxy decouples DLSS-NR's GPU performance cost from the display resolution without introducing blur.
+Designed to work alongside RenoDX addons, and with any game, engine, or injector that calls `nvngx_dlssnr.dll` over DirectX 12. Tested with clshortfuse's DLSS addon (`renodx-dlss.addon64`).
 
-Tested specifically with clshortfuse's DLSS addon (`renodx-dlss.addon64`), but architected to work with any game, engine, or injector that calls `nvngx_dlssnr.dll` over DirectX 12.
+---
+
+## Artifacts
+
+| File | Purpose |
+| --- | --- |
+| `nvngx_dlssnr.dll` | The proxy itself (drop into the game folder; forwards to the real `nvngx_dlssnr_real.dll`) |
+| `DLSS5-NR-Boost-manager.exe` | GUI manager: quick install / installed-game management / operation history / **panel debug** |
+| `dlssnr_console.exe` | Standalone debug console (live sync with the proxy outside the game) |
+| `nvngx_dlssnr.ini` | Configuration (hot-reloaded in-game every second) |
+
+The manager follows **Material 3 Expressive** (light/dark themes, design tokens from the [creeper-qt](https://github.com/creeper5820/creeper-qt) BlueMiku theme pack), switches between **zh / EN / RU / 한** instantly, and is fully painted with anti-aliased GDI+ — no external dependencies.
 
 ---
 
 ## Features
 
-- Standalone drop-in proxy for `nvngx_dlssnr.dll`.
-- Downsamples the frame using an area-weighted box filter before evaluating the neural model.
-- High-frequency matched residual resolve pass: composites the neural delta back onto the untouched native frame.
-- HDR luminance bounding prevents highlight clipping and shadow instability.
-- Integrated AMD RCAS (Robust Contrast Adaptive Sharpening) pass.
-- In-game hot-reloading: changes made to `nvngx_dlssnr.ini` take effect within one second without restarting.
-- In-game hotkeys for live toggling, mode switching, and scale adjustments.
-- **In-game overlay panel**: press `Ctrl+Alt+F11` to summon a bilingual topmost panel for mouse-driven adjustments (drag sliders, click presets/segments, toggle switches) while the game keeps running.
-- **Standalone console EXE**: `dlssnr_console.exe` edits the same settings from outside the game (INI + live shared-memory sync).
-- Handles SDR (B8G8R8A8 / R8G8B8A8), HDR10 PQ (R10G10B10A2), scRGB (R16G16B16A16_FLOAT), and 3-channel HDR (R11G11B10_FLOAT).
-- Dynamic subrect tracking preserves viewport offsets for games using Dynamic Resolution Scaling (DRS).
+### Proxy DLL (core algorithms, synced with upstream v1.0.5)
+
+- **Drop-in proxy** for `nvngx_dlssnr.dll`.
+- Pre-inference downsampling shader (**hardware bilinear + LDS tile caching + in-place copy** — minimal GPU cost).
+- **High-frequency matched-residual resolve**: composites the neural delta back onto the untouched native frame.
+- **Super-sampling up to 200%**: `ResolutionScale` range 0.25 ~ 2.00 (DLDSR / photo mode, 4x sample density).
+- **Depth-aware bilateral silhouette preservation**: uses the native depth buffer to stop low-res neural radiance bleeding across foreground edges.
+- **Anamorphic / asymmetric neural scaling** (experimental): independent horizontal / vertical scaling.
+- **Alternating-frame VRNR** (experimental, off by default): evaluate DLSS-NR every 2nd frame.
+- **Official NVIDIA NR params**: passes through the caller's NR settings by default (OptiScaler / RenoDX / engine); optionally override via `[DLSSNR_Settings]` (Style: Balanced / Sharp / Cinematic, Intensity, Local structure / tone, Skin structure, Auto mask).
+- **HDR luminance bounding** + integrated **AMD RCAS** sharpening.
+- **In-game hot-reload**: ini changes take effect within ~1 second.
+- **SEH crash shield** so shader failures don't take the game down.
+- SDR (B8G8R8A8 / R8G8B8A8), HDR10 PQ (R10G10B10A2), scRGB (R16G16B16A16), and 3-channel HDR (R11G11B10).
+- **Dynamic sub-rect tracking** for games with dynamic resolution scaling.
+
+### In-game overlay panel
+
+- `Ctrl+Alt+F11` summons a topmost panel: M3E sliders, Matched/Bilinear segments, toggles — fully mouse-driven, the game never stops;
+- The panel never steals focus or touches the game's input pipeline (low-level mouse hook observer); the game recovers the instant it closes;
+- Panel position is remembered; zh / EN / RU / 한 switchable from the header.
+
+### DLSS5-NR-Boost manager (GUI)
+
+1. **Quick Install**: auto-detects the proxy package → scans your game library (recursive, skips recycle bins / symlinks) → tick targets → **one-click install** (renames the stock DLL to `nvngx_dlssnr_real.dll`, copies proxy + ini) / **one-click uninstall** (fully restores);
+2. **Installed games**: restores remembered installs, batch uninstall, status refresh, double-click to open the folder;
+3. **History**: full install/uninstall audit trail (`dlssnr_manager_history.log`) plus a runtime log with a pop-out window;
+4. **Panel debug**: edits the proxy package's `nvngx_dlssnr.ini` with native BlueMiku controls — every toggle, resolve-mode segments, sliders (super-sampling 25–200%), anamorphic X/Y, depth-aware, VRNR, the **NVIDIA NR settings block**, and **Ctrl+Alt-combo hotkey rebinding**; changes auto-commit with a 500 ms debounce.
+
+Also: `F11` fullscreen, freely resizable adaptive layout, persisted language/theme, double-click rows to open folders.
 
 ---
 
 ## Requirements
 
-- Windows 10/11 (64-bit)
-- NVIDIA RTX GPU (RTX 20, 30, 40, or 50 series)
-- A game or addon utilizing NVIDIA DLSS-NR (`nvngx_dlssnr.dll`) over DirectX 12
+- Windows 10 / 11 (64-bit)
+- NVIDIA RTX GPU (RTX 20 / 30 / 40 / 50 series)
+- A game or plugin that uses NVIDIA DLSS-NR (`nvngx_dlssnr.dll`) over DirectX 12
 
 ---
 
-## Installation
+## Build (x64, MSVC)
 
-1. Navigate to your game folder where `nvngx_dlssnr.dll` is located.
-2. Rename the original `nvngx_dlssnr.dll` to:
-   ```text
-   nvngx_dlssnr_real.dll
-   ```
-3. Copy the proxy `nvngx_dlssnr.dll` and `nvngx_dlssnr.ini` from the release into that same folder.
-4. *(Optional)* Copy `dlssnr_console.exe` into the same folder to tune settings from outside the game.
-5. *(Optional for ReShade users)*: Copy `dlssnr-companion.addon64` into your game folder to get a live configuration overlay under the ReShade Home menu.
-6. Launch the game. Press `Ctrl+Alt+F11` in-game (or run `dlssnr_console.exe`) to open the configuration panel.
+```text
+build.bat
+```
+
+Produces `nvngx_dlssnr.dll` (proxy), `dlssnr_console.exe` (debug console), and `DLSS5-NR-Boost-manager.exe` (manager, with the embedded icon from `app.ico` / `app.rc`).
+
+---
+
+## Installation (manager recommended)
+
+1. Put `DLSS5-NR-Boost-manager.exe` next to the proxy `nvngx_dlssnr.dll` and `nvngx_dlssnr.ini` (auto-detected);
+2. Open the manager → **Quick Install** → pick a game folder or library root → Scan → tick → **Install**;
+3. Launch the game and press `Ctrl+Alt+F11` for the panel; or tweak settings from the manager's **Panel debug** page (the game hot-reloads the ini automatically).
+
+<details>
+<summary>Manual installation (equivalent)</summary>
+
+1. In the game folder, rename the stock `nvngx_dlssnr.dll` to `nvngx_dlssnr_real.dll`;
+2. Copy the proxy `nvngx_dlssnr.dll` and `nvngx_dlssnr.ini` into the same folder;
+3. *(Optional)* Drop `dlssnr_console.exe` alongside for out-of-game tuning;
+4. *(ReShade users)* Copy `dlssnr-companion.addon64` into the game folder for a live panel in the ReShade Home menu;
+5. Launch the game and press `Ctrl+Alt+F11`.
+
+</details>
 
 ---
 
 ## Configuration (`nvngx_dlssnr.ini`)
 
-The configuration file is read at startup and automatically hot-reloaded every second when modified:
+Read at startup and hot-reloaded every second:
 
 ```ini
 [DLSSNR_Proxy]
-; Master toggle for the proxy
-; 1 = Proxy enabled (applies ResolutionScale)
-; 0 = Proxy disabled (100% native passthrough to real DLSS-NR)
-EnableProxy = 1
+EnableProxy = 1          ; 1 = proxy active; 0 = native passthrough
+ResolutionScale = 0.75   ; inference scale (0.25 ~ 2.00; 2.00 = 200% super-sampling)
+EnableAnamorphic = 0     ; experimental asymmetric scaling (uses X/Y below)
+ResolutionScaleX = 0.65  ; horizontal scale
+ResolutionScaleY = 0.85  ; vertical scale
+EnlargementMode = 1      ; 1 = Matched Residual; 0 = Bilinear Direct
+TransferStrength = 1.00  ; residual composite strength (0 ~ 2)
+ColorStrength = 1.00     ; color strength (0 ~ 1)
+Sharpness = 0.20         ; RCAS sharpening (0 ~ 1)
+EnableDepthAwareResolve = 1 ; depth-aware silhouette preservation
+EnableAlternatingFrames = 0 ; alternating-frame VRNR (experimental)
+EnableHotkeys = 1        ; in-game hotkeys master switch
+EnableUi = 1             ; in-game panel master switch
+UiLanguage = 0           ; panel language: 0 zh / 1 en / 2 ru / 3 ko
 
-; Internal model resolution scale (0.25 to 1.00)
-; 1.00 = 100% Native
-; 0.85 = 85% Resolution (~28% faster neural pass)
-; 0.80 = 80% Resolution (~35% faster)
-; 0.75 = 75% Resolution (~40% faster, recommended sweet spot)
-; 0.67 = 67% Resolution (DLSS Quality ratio)
-; 0.50 = 50% Resolution (DLSS Performance ratio)
-ResolutionScale = 0.75
-
-; Resolve algorithm
-; 1 = Matched Residual (1:1 Native Anchor + Neural Detail Transfer, Ultra Crisp, Recommended)
-; 0 = Direct Neural Reconstruction Bilinear + RCAS
-EnlargementMode = 1
-
-; Strength of the neural detail transfer (0.0 to 2.0, default 1.0)
-TransferStrength = 1.00
-
-; Neural color/tint transfer strength (0.0 to 1.0, default 1.0)
-; 1.00 = Full neural color transfer
-; 0.00 = Luminance-only transfer (eliminates neural color shifts/tint while keeping full lighting and detail)
-ColorStrength = 1.00
-
-; Contrast-adaptive edge sharpening (0.0 to 1.0, default 0.0)
-Sharpness = 0.20
-
-; Enable in-game hotkeys
-EnableHotkeys = 1
-
-; Enable the in-game overlay panel hotkey (Ctrl+Alt+F11)
-EnableUi = 1
+[DLSSNR_Settings]
+UseCustomSettings = 0    ; 0 = pass through caller's NR params; 1 = override below
+Style = 0                ; 0 Balanced / 1 Sharp / 2 Cinematic
+Intensity = 1.00         ; reconstruction intensity (0 ~ 2)
+LocalStructureStrength = 1.00
+LocalToneStrength = 1.00
+SkinStructureStrength = -1.00  ; -1 = auto
+UseAutoMask = 0
 
 [Hotkeys]
-; Require Ctrl + Alt modifiers held down with the hotkey (1 = yes, 0 = no)
 RequireCtrlAlt = 1
-
-; Virtual-Key codes (Decimal):
-; Space=32, PageUp=33, PageDown=34, End=35, Home=36, Insert=45, Delete=46
-; F1-F12 = 112-123, 0-9 = 48-57, A-Z = 65-90
 KeyToggleProxy = 32
 KeyToggleMode = 35
 KeyScaleUp = 33
 KeyScaleDown = 34
-
-; Base key of the overlay panel combo (Ctrl+Alt+<key>), default F11 = 122
-KeyToggleUI = 122
+KeyToggleUI = 123        ; panel toggle (default F12)
 ```
 
----
-
-## In-Game Overlay Panel & Standalone Console
-
-Both UIs share the same bilingual layout (Chinese primary / English secondary) and are fully mouse-driven:
-
-- **Switch** — toggle proxy / hotkeys / panel hotkey.
-- **Slider + presets** — resolution scale with quick chips (100 / 85 / 80 / 75 / 67 / 50 %) and a fine slider.
-- **Segment** — resolve mode (匹配残差 Matched Residual / 双线性 Bilinear).
-- **Key rows** — display the hotkey combos (the console EXE also lets you rebind them by clicking a row and pressing a key; Esc cancels).
-- Every change is **auto-saved** to `nvngx_dlssnr.ini` and, while the game is running, pushed to the shared-memory config so it applies live.
-- **GitHub row** — click the `GitHub` link at the bottom of the panel to open the project homepage (<https://github.com/suviland/DLSSNR-Cost-Scaler-panel>) in your browser.
-
-### In-game (proxy DLL)
-
-- Press `Ctrl+Alt+F11` (`KeyToggleUI`) to show/hide the panel. It is a borderless topmost tool window; when shown it **takes foreground focus** so it can be clicked normally over the game, the header can be dragged anywhere, and the `×` hides it again (focus returns to the game).
-- Works even when `EnableHotkeys = 0`; disable it entirely with `EnableUi = 0`.
-
-### Standalone console (`dlssnr_console.exe`)
-
-- Place it in the same folder as `nvngx_dlssnr.ini` and run it (game may be running or not).
-- When the game is not running it edits the INI for the next launch; when the game is running the panel stays live-synced with the in-game overlay/hotkeys through shared memory.
-- Click the header `×` or press `Esc` to exit.
+> Everything above can be edited visually on the **Panel debug** page of `DLSS5-NR-Boost-manager.exe`.
 
 ---
 
-## ReShade Companion Addon (`dlssnr-companion.addon64`)
+## FAQ
 
-If using ReShade, drop `dlssnr-companion.addon64` into your game directory alongside ReShade.
-
-- **Non-Invasive:** Does not hook graphics draw calls or pipeline passes; operates purely as an overlay tab in the ReShade Home menu.
-- **Debounced Sliders:** Features interactive debouncing to ensure rapid slider adjustments never hitch or cause GPU model thrashing.
-- **In-Game Hotkey Rebinding:** Rebind shortcut keys and modifier requirements directly in the UI.
-
----
-
-## In-Game Hotkeys
-
-When `EnableHotkeys = 1`, the default shortcuts are:
-
-- `Ctrl + Alt + F11` — Toggle the overlay panel (independent of `EnableHotkeys`; gated by `EnableUi`).
-- `Ctrl + Alt + Space` — Toggle proxy ON / OFF (switches between scaled proxy and native passthrough).
-- `Ctrl + Alt + End` — Toggle EnlargementMode between Matched Residual (`1`) and Bilinear (`0`).
-- `Ctrl + Alt + PageUp` — Increase resolution scale by +5%.
-- `Ctrl + Alt + PageDown` — Decrease resolution scale by -5%.
+- **Game folder under Program Files?** Run the manager as administrator, or install manually.
+- **Panel gets no mouse input?** It uses an observer-only low-level mouse hook; report it if an anti-cheat interferes.
+- **Crash log shows `DXGI_ERROR_DEVICE_REMOVED`?** That's a GPU driver reset (TDR) — unrelated to the panel (it never touches the game's D3D device). Check overclocking / drivers.
+- **Is VRNR worth it?** Camera pans show 30 Hz sawtooth judder and ray-traced games may flicker — keep it off for smoothest gameplay.
 
 ---
 
-## Building from Source
+## Credits & License
 
-Prerequisites:
-- Visual Studio 2022 or Build Tools with the Desktop C++ workload.
-- Windows 10/11 SDK with `fxc.exe` (DirectX Shader Compiler).
-
-To build:
-1. Open the project folder.
-2. Run `build.bat` from an x64 Developer Command Prompt or standard prompt (it auto-locates vcvars64 / fxc when installed in the default locations).
-3. The compiled outputs are generated in the root folder: `nvngx_dlssnr.dll` (proxy, includes the in-game overlay) and `dlssnr_console.exe` (standalone console).
-
----
-
-## Credits
-
-- [xenmods / DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) — Original author of this project; this fork (GUI panel, standalone console, and bilingual docs) is built upon their work.
-- [Dagherbou / OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR) — For pioneering DLSS-NR integration, the matched residual resolve concept, and feature lifecycle handling.
-- [OptiScaler](https://github.com/optiscaler/OptiScaler) — For the parent upscaler framework.
-- [clshortfuse / RenoDX](https://github.com/clshortfuse/renodx) — For the RenoDX framework and DLSS ReShade addon.
-- [AMD](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) — For the Robust Contrast Adaptive Sharpening (RCAS) algorithm.
-
----
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+- Upstream algorithms: [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) (this repo is the Chinese-enhanced fork)
+- Design tokens: [creeper-qt](https://github.com/creeper5820/creeper-qt) (MIT)

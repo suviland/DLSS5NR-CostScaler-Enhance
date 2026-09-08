@@ -80,3 +80,24 @@ if exist dlssnr_console.exe (
     echo [ERROR] Console EXE link failed.
     exit /b 1
 )
+
+echo Compiling resources for DLSS5-NR-Boost-manager.exe...
+rc.exe /nologo app.rc
+if errorlevel 1 (
+    echo [ERROR] Resource compile failed.
+    exit /b 1
+)
+
+echo Compiling DLSS5-NR-Boost-manager.exe...
+cl.exe /nologo /O2 /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "UNICODE" /D "_UNICODE" dlssnr_manager.cpp app.res /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib comctl32.lib version.lib ole32.lib shell32.lib gdiplus.lib /OUT:DLSS5-NR-Boost-manager.exe
+if errorlevel 1 (
+    echo [ERROR] Manager EXE build failed.
+    exit /b 1
+)
+
+if exist DLSS5-NR-Boost-manager.exe (
+    echo [SUCCESS] Built DLSS5-NR-Boost-manager.exe
+) else (
+    echo [ERROR] Manager EXE link failed.
+    exit /b 1
+)

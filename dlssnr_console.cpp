@@ -25,7 +25,7 @@ using namespace dlssnr_ui;
 // ===========================================================================
 static UiValues        s_cfg;
 static wchar_t         s_iniPath[MAX_PATH] = { 0 };
-static const wchar_t*  kFooter = L"修改后自动保存 · Ctrl+Alt+F11 也能在游戏里呼出面板";
+static const wchar_t*  kFooter = L"";   // idle footer stays blank (auto-save hint removed)
 
 // ===========================================================================
 // Shared memory (inter-process, mirrors DlssnrSharedConfig)
@@ -78,6 +78,11 @@ static void LoadIni() {
     s_cfg.keyScaleDown   = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  s_iniPath);
     s_cfg.keyToggleUi    = (int)GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F11, s_iniPath);
 
+    int lang = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"UiLanguage", (int)L_ZH, s_iniPath);
+    if (lang < 0 || lang >= L_COUNT) lang = (int)L_ZH;
+    s_cfg.uiLanguage = lang;
+    SetLang(lang);   // sync the global display language
+
     ClampAll();
 }
 
@@ -101,6 +106,7 @@ static void SaveIni() {
     swprintf_s(buf, L"%d", s_cfg.keyScaleUp);     SaveIniValue(L"Hotkeys", L"KeyScaleUp", buf);
     swprintf_s(buf, L"%d", s_cfg.keyScaleDown);   SaveIniValue(L"Hotkeys", L"KeyScaleDown", buf);
     swprintf_s(buf, L"%d", s_cfg.keyToggleUi);    SaveIniValue(L"Hotkeys", L"KeyToggleUI", buf);
+    swprintf_s(buf, L"%u", (uint32_t)s_cfg.uiLanguage); SaveIniValue(L"DLSSNR_Proxy", L"UiLanguage", buf);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, s_iniPath); // flush
 }
 
@@ -120,6 +126,7 @@ static void PushShared() {
     g_sh->keyScaleDown     = (uint32_t)s_cfg.keyScaleDown;
     g_sh->enableUi         = s_cfg.enableUi ? 1 : 0;
     g_sh->keyToggleUi      = (uint32_t)s_cfg.keyToggleUi;
+    g_sh->uiLanguage       = (uint32_t)s_cfg.uiLanguage;
     g_sh->writerSource     = 1;                 // standalone console
     g_sh->version++;
     s_lastVersion = g_sh->version;
@@ -140,6 +147,9 @@ static void AdoptFromShared() {
     s_cfg.keyScaleUp     = (int)g_sh->keyScaleUp;
     s_cfg.keyScaleDown   = (int)g_sh->keyScaleDown;
     s_cfg.keyToggleUi    = (int)g_sh->keyToggleUi;
+    s_cfg.uiLanguage     = (int)g_sh->uiLanguage;
+    if (s_cfg.uiLanguage < 0 || s_cfg.uiLanguage >= L_COUNT) s_cfg.uiLanguage = (int)L_ZH;
+    SetLang(s_cfg.uiLanguage);
     ClampAll();
 }
 
@@ -208,17 +218,36 @@ static constexpr int kClientW = 396;
 static PanelHooks g_hooks;
 static Panel      g_panel;
 
+static void SavePanelPos(HWND hwnd) {
+    RECT wr; GetWindowRect(hwnd, &wr);
+    wchar_t b[24];
+    swprintf_s(b, L"%d", (int)wr.left);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelX", b, s_iniPath);
+    swprintf_s(b, L"%d", (int)wr.top);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelY", b, s_iniPath);
+}
 static void PlaceWindow(HWND hwnd, int w, int h) {
+    // Honor the position remembered in the ini ([DLSSNR_Proxy] PanelX/PanelY),
+    // clamped to the nearest monitor's work area; top-right default otherwise.
+    int px = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelX", -1, s_iniPath);
+    int py = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelY", -1, s_iniPath);
     RECT wa{ 0, 0, 0, 0 };
     MONITORINFO mi{ sizeof(mi) };
-    HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    POINT center{ px >= 0 ? px + w / 2 : 0, py >= 0 ? py + h / 2 : 0 };
+    HMONITOR mon = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
     if (mon && GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
     else SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    int x = wa.right - w - 14;
-    int y = wa.top + 14;
+    int x, y;
+    if (px >= 0 && py >= 0) {
+        x = px; y = py;
+    } else {
+        x = wa.right - w - 14;
+        y = wa.top + 14;
+    }
     if (x < wa.left) x = wa.left;
-    if (y + h > wa.bottom) y = wa.bottom - h;
     if (y < wa.top) y = wa.top;
+    if (x + w > wa.right)  x = wa.right - w;
+    if (y + h > wa.bottom) y = wa.bottom - h;
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
 }
 
@@ -233,6 +262,7 @@ static LRESULT CALLBACK ConsoleWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         break;
     case WM_CLOSE:
+        SavePanelPos(hwnd);   // remember where the user left the panel
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
