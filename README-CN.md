@@ -1,95 +1,93 @@
-# DLSS5-NR-Boost
+# DLSS5NR-CostScaler
 
 <p align="center">
   <b>简体中文</b> ｜ <a href="README.md">English</a>
 </p>
 
-一个用于 NVIDIA DLSS-NR（DirectX 12）的独立代理 DLL 与配套管理工具集，实现**分辨率缩放**与**算力开销控制**。它让神经重建模型以较低的分辨率运行推理，同时借助"高频匹配残差合成"着色器保留原生 1:1 的几何、精细纹理、文字与边缘细节——**在不引入模糊的前提下，把 DLSS-NR 的 GPU 开销从显示分辨率上解耦**。
+> ✅ **实测通过**：ReShade（含 RenoDX 系插件）·《上古卷轴》社区着色器 [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS 插件（`renodx-dlss.addon64`）
 
-主要面向配合 RenoDX 插件使用，也适用于任何通过 DirectX 12 调用 `nvngx_dlssnr.dll` 的游戏、引擎或注入器（架构上与具体宿主无关）。已在 clshortfuse 的 DLSS 插件（`renodx-dlss.addon64`）上实测通过。
+---
+
+## ✨ 本分支的优势（对比上游）
+
+本仓库是 [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) 的增强分支（上游 v1.0.5 已完整同步）。上游是一个"手改 ini + 重启游戏"的纯算法代理，本分支把它升级为**所见即所得的实时调参工具链**，并深度改造了跳帧降噪：
+
+| 能力 | 上游 | 本分支 |
+| --- | :-: | :-: |
+| 调参方式 | 手改 ini + 重启游戏 | **游戏内悬浮面板 / 控制台 / 管理器，改了立刻生效** |
+| 多端实时联动 | 无 | 面板 ⇄ 控制台 ⇄ 共享内存 ⇄ 代理，毫秒级同步 |
+| 图形化安装 / 卸载 | 手动改名复制 | **管理器递归扫描游戏库，一键装 / 卸 / 还原** |
+| VRNR 跳帧 | 固定隔帧 | **间隔可调（每 1/2/3 帧）+ 跳帧混合 + 动态调度** |
+| 界面 | — | M3E 风格、深浅双主题、中 / EN / RU / 한 四语言 |
+| 安全面 | — | SEH 崩溃护盾，着色器异常不带走游戏 |
+
+## 🆕 新特性
+
+### VRNR 2.0：可调间隔 + 运动自适应降噪（本分支独有）
+
+跳帧省算力的代价是"跑 NR 的帧干净、跳过的帧脏"。本分支给出完整解法，三个开关全部进面板：
+
+- **推理间隔三档可调**（`VrnrInterval`）：每帧 / 每 2 帧 / 每 3 帧；
+- **跳帧混合**（`VrnrBlend`）：跳帧时降采样照常执行，resolve 着色器按**逐像素运动矢量幅度**在「原生像素」与「当前帧低通」之间插值——静止区域最锐利、运动区域不闪噪；
+- **动态跳帧**（`VrnrAdaptiveSkip`）：内置 MV 运动量归约 pass（GPU 归约 + 滞后回读），场景在动自动每帧跑 NR，静止时才按间隔跳帧——看菜单、背包时 NR 几乎停转。
+
+### 三端实时联动的调参体系
+
+- **游戏内悬浮面板**（`Ctrl+Alt+F11`）：置顶、可拖动、自由缩放；不抢焦点、不触碰游戏输入管道（低级鼠标钩子旁观方案），关闭后游戏输入立即恢复；
+- **独立控制台 `dlssnr_console.exe`**：游戏进程外运行，经共享内存与代理实时双向同步；
+- **ReShade 伴侣插件**（`dlssnr-companion.addon64`）：ReShade Home 菜单内的配置页。
+
+任何一处修改（含 ini 热重载），其余各端即时跟随。
+
+### 图形化管理器 `DLSS5NR-CostScaler-Manager.exe`
+
+纯 Win32 + GDI+ 自绘 Material 3 Expressive 界面（零运行时依赖），四页面：**快速安装**（递归扫描游戏库、一键装 / 卸 / 还原）· **已安装管理** · **操作记录** · **面板调试**（直接读写代理 ini，500ms 防抖自动写回）。
+
+### 分页面板 = 完整控制台
+
+**基础 / 高级 / 降噪 NR / 快捷键** 四页覆盖全部配置：缩放 25%–200% 快捷芯片、传递 / 色彩 / RCAS 滑条、深度感知、各向异性 X/Y、**NVIDIA NR 官方参数区**、带 Ctrl+Alt 组合的快捷键可视化重绑；深浅主题、四语言、位置与尺寸记忆。
+
+### 算法层（同步上游 v1.0.5）
+
+硬件双线性降采样（LDS 瓦片缓存）→ 低分辨率 NR 推理 → **高频匹配残差合成**回原生帧；**25%–200% 超采样**、**各向异性缩放**（实验）、**深度感知双边轮廓保持**、HDR 亮度钳制 + RCAS 锐化、DRS 动态子矩形跟踪、SDR / HDR10 PQ / scRGB / R11G11B10。
+
+---
+
+## 这是什么
+
+一个用于 NVIDIA DLSS-NR（DirectX 12）的独立代理 DLL 与配套工具集：让神经重建模型以较低分辨率运行推理，同时借助「高频匹配残差合成」着色器保留原生 1:1 的几何、精细纹理、文字与边缘细节——**在不引入模糊的前提下，把 DLSS-NR 的 GPU 开销从显示分辨率上解耦**。架构上与具体宿主无关，任何通过 DirectX 12 调用 `nvngx_dlssnr.dll` 的游戏、引擎或注入器均可使用。
+
+**工作原理**：原版 DLL 被改名为 `nvngx_dlssnr_real.dll`，代理拦截 NGX 调用——先把原生画面降采样（开销极低），交给 DLSS-NR 推理，再把神经网络的增量以「匹配残差」方式合成回未被改动的原生帧上。
 
 ---
 
 ## 产物一览
 
+构建产物输出到 `build\<版本号>\`（当前 `build/0.7.0/`），文件属性内嵌版本信息：
+
 | 文件 | 用途 |
 | --- | --- |
 | `nvngx_dlssnr.dll` | 代理本体（放进游戏目录，转发到真实 `nvngx_dlssnr_real.dll`） |
-| `DLSS5-NR-Boost-manager.exe` | 图形化管理器：快速安装 / 已安装管理 / 操作记录 / **面板调试** |
-| `dlssnr_console.exe` | 独立调试控制台（游戏进程外与代理联机同步，保留用于 DLL 联调） |
-| `nvngx_dlssnr.ini` | 配置文件（游戏内每秒热重载，改动即生效） |
-
-管理器基于 **Material 3 Expressive** 视觉（深浅双主题，设计令牌参考 [creeper-qt](https://github.com/creeper5820/creeper-qt) 的 BlueMiku 主题包），支持 **中 / EN / RU / 한** 四语言即时切换；纯 GDI+ 抗锯齿自绘 UI，零外部依赖。
-
----
-
-## 功能特性
-
-### 代理 DLL（核心算法，已同步上游 v1.0.5）
-
-- **即插即用**：原版改名 `nvngx_dlssnr_real.dll` 后代理即接管。
-- 推理前先用降采样着色器压缩画面（**硬件双线性 + LDS 瓦片缓存 + 原位拷贝**，GPU 开销极低）。
-- **高频匹配残差合成**（Resolve）：把神经网络的增量合成回未被改动的原生帧上。
-- **超采样至 200%**：`ResolutionScale` 范围 0.25 ~ 2.00（DLDSR / 摄影模式 4x 采样密度）。
-- **深度感知双边轮廓保持**：利用原生深度缓冲，避免低分辨率神经辐射跨前景边缘渗色。
-- **各向异性 / 非对称神经缩放**（实验）：横纵分辨率独立控制（`EnableAnamorphic` + X/Y）。
-- **隔帧推理 VRNR**（实验，默认关闭）：每 2 帧评估一次 DLSS-NR，换取更高平均帧率。
-- **NVIDIA 官方 NR 参数**：默认**透传调用方**（OptiScaler / RenoDX / 引擎）的 NR 设置；也可通过 `[DLSSNR_Settings]` 自行覆盖（风格：平衡 / 锐利 / 电影，强度、局部结构、局部色调、皮肤结构、自动遮罩）。
-- **HDR 亮度钳制** + 内置 **AMD RCAS** 锐化。
-- **游戏内热重载**：修改 ini 约 1 秒生效，无需重启游戏。
-- **SEH 崩溃护盾**：着色器编译等异常不会直接带走游戏进程。
-- 支持 SDR（B8G8R8A8 / R8G8B8A8）、HDR10 PQ（R10G10B10A2）、scRGB（R16G16B16A16）与三通道 HDR（R11G11B10）。
-- **动态子矩形跟踪**：为使用动态分辨率缩放（DRS）的游戏保留视口偏移。
-
-### 游戏内悬浮面板
-
-- `Ctrl+Alt+F11` 呼出**置顶面板**：M3E 滑条、Matched/Bilinear 分段、开关，全程鼠标操作，游戏无需中断；
-- 面板不抢焦点、不触碰游戏输入管道（低级鼠标钩子旁观方案），关闭后游戏输入立即恢复；
-- 面板位置自动记忆；界面语言中 / EN / RU / 한 循环切换。
-
-### DLSS5-NR-Boost manager（图形化管理器）
-
-1. **快速安装**：自动识别代理发布包 → 扫描游戏库（递归、跳过回收站 / 符号链接）→ 勾选目标 → **一键安装**（原版自动改名 `nvngx_dlssnr_real.dll` + 复制代理与 ini）/**一键卸载**（完整还原）；
-2. **已安装管理**：从记录恢复所有已安装游戏，批量卸载、状态刷新、双击打开目录；
-3. **操作记录**：完整的安装 / 卸载审计历史（`dlssnr_manager_history.log`）与运行日志，支持分离弹窗；
-4. **面板调试**：用 manager 原生 BlueMiku 控件直接编辑代理包内的 `nvngx_dlssnr.ini`——全部开关、重建模式分段、滑条（含超采样 25–200%）、各向异性 X/Y、深度感知、隔帧推理、**NVIDIA NR 参数区**、**支持 Ctrl+Alt 组合的快捷键重绑**；改动 500ms 防抖自动写回。
-
-其他：F11 全屏、窗口自由缩放自适应、语言与主题持久化、双击列表打开目录。
+| `DLSS5NR-CostScaler-Manager.exe` | 图形化管理器（安装 / 卸载 / 已装管理 / 记录 / 面板调试） |
+| `dlssnr_console.exe` | 独立调试控制台（游戏外联机同步） |
+| `nvngx_dlssnr.ini` | 配置文件（游戏内每秒热重载） |
+| `dlssnr-companion.addon64` | ReShade 伴侣插件（可选） |
 
 ---
 
-## 系统要求
+## 快速开始
 
-- Windows 10 / 11（64 位）
-- NVIDIA RTX 显卡（RTX 20 / 30 / 40 / 50 系）
-- 一个通过 DirectX 12 使用 NVIDIA DLSS-NR（`nvngx_dlssnr.dll`）的游戏或插件
-
----
-
-## 构建（x64，MSVC）
-
-```text
-build.bat
-```
-
-一键产出：`nvngx_dlssnr.dll`（代理）、`dlssnr_console.exe`（调试控制台）、`DLSS5-NR-Boost-manager.exe`（管理器，内嵌图标资源 `app.ico` / `app.rc`）。
-
----
-
-## 安装方法（推荐使用管理器）
-
-1. 把 `DLSS5-NR-Boost-manager.exe` 与代理 `nvngx_dlssnr.dll`、`nvngx_dlssnr.ini` 放在同一文件夹（管理器自动识别）；
+1. 把管理器与代理 `nvngx_dlssnr.dll`、`nvngx_dlssnr.ini` 放在同一文件夹（自动识别）；
 2. 打开管理器 →「快速安装」→ ② 选择游戏目录或游戏库根目录 → 扫描 → 勾选 → **一键安装**；
-3. 启动游戏，按 `Ctrl+Alt+F11` 呼出面板；或在管理器「面板调试」页直接调整配置（改完 ini 会自动热重载进游戏）。
+3. 启动游戏，`Ctrl+Alt+F11` 呼出面板开调；或直接在管理器「面板调试」页改（游戏内 1 秒热重载生效）。
 
 <details>
 <summary>手动安装（等价流程）</summary>
 
 1. 进入游戏目录，把原有 `nvngx_dlssnr.dll` 改名为 `nvngx_dlssnr_real.dll`；
 2. 把代理 `nvngx_dlssnr.dll` 和 `nvngx_dlssnr.ini` 复制到同一目录；
-3. *（可选）* 把 `dlssnr_console.exe` 也放进去，即可在游戏外调试；
-4. *（ReShade 用户可选）* 把 `dlssnr-companion.addon64` 复制到游戏目录，在 ReShade Home 菜单获得实时配置面板；
-5. 启动游戏，按 `Ctrl+Alt+F11` 打开配置面板。
+3. *（可选）* 把 `dlssnr_console.exe` 放进去，在游戏外调试；把 `dlssnr-companion.addon64` 放进去，在 ReShade 菜单调参；
+4. 启动游戏，`Ctrl+Alt+F11` 打开面板。
 
 </details>
 
@@ -111,14 +109,16 @@ TransferStrength = 1.00  ; 残差合成强度（0 ~ 2）
 ColorStrength = 1.00     ; 色彩强度（0 ~ 1）
 Sharpness = 0.20         ; RCAS 锐化（0 ~ 1）
 EnableDepthAwareResolve = 1 ; 深度感知轮廓保持
-EnableAlternatingFrames = 0 ; 隔帧推理 VRNR（实验，默认关）
+VrnrInterval = 1         ; NR 推理间隔：1 每帧（关）/ 2 每2帧 / 3 每3帧
+VrnrBlend = 1            ; 跳帧混合（按 MV 逐像素加权，抑制噪点呼吸感）
+VrnrAdaptiveSkip = 0     ; 动态跳帧（运动时自动每帧推理）
 EnableHotkeys = 1        ; 游戏内热键总开关
 EnableUi = 1             ; 游戏内面板总开关
 UiLanguage = 0           ; 面板语言：0 中 / 1 EN / 2 RU / 3 한
-PanelX = 1500            ; 面板窗口位置 X（像素；隐藏 / 退出时自动保存）
-PanelY = 120             ; 面板窗口位置 Y（像素）
-PanelW = 396             ; 面板窗口宽度（自由缩放后自动保存；独立控制台同样读写）
-PanelH = 640             ; 面板窗口高度（自由缩放后自动保存；控制台默认 640）
+PanelX = 1500            ; 面板窗口位置 / 尺寸（自动保存，控制台同样读写）
+PanelY = 120
+PanelW = 396
+PanelH = 640
 
 [DLSSNR_Settings]
 UseCustomSettings = 0    ; 0 = 透传调用方的 NR 参数；1 = 用下面的值覆盖
@@ -138,20 +138,35 @@ KeyScaleDown = 34        ; 降低缩放
 KeyToggleUI = 123        ; 呼出面板（默认 F12）
 ```
 
-> 以上全部配置都可以在 `DLSS5-NR-Boost-manager.exe` 的「面板调试」页可视化修改，改动自动保存。
+> 以上全部配置都可以在管理器「面板调试」页或游戏内面板可视化修改，改动自动保存。`EnableAlternatingFrames` 为旧版兼容键，由 `VrnrInterval > 1` 自动推导。
 
 ---
+
+## 系统要求
+
+- Windows 10 / 11（64 位）
+- NVIDIA RTX 显卡（RTX 20 / 30 / 40 / 50 系）
+- 一个通过 DirectX 12 使用 NVIDIA DLSS-NR（`nvngx_dlssnr.dll`）的游戏或插件
+
+## 构建（x64，MSVC）
+
+```text
+build.bat
+```
+
+自动完成：HLSL 着色器编译（fxc）→ 版本资源 → 代理 DLL → 控制台 → 管理器。产物统一输出到 `build\<版本>\`，中间文件在 `build\obj\`；版本号在 `build.bat`（`VERSION`）与 `app_version.rc` 中维护。
 
 ## 常见问题
 
 - **游戏目录在 Program Files？** 请以管理员身份运行管理器，或手动完成安装。
 - **面板收不到鼠标？** 面板采用低级鼠标钩子旁观方案，不与游戏抢输入；若被反作弊拦截请反馈。
+- **VRNR 值得开吗？** 配合「跳帧混合 + 动态跳帧」体验远好于裸跳帧：静止场景几乎无差异，激烈运动时自动回到每帧推理。若仍有噪点呼吸感，保持 `VrnrInterval = 1` 即可。
 - **闪退日志出现 `DXGI_ERROR_DEVICE_REMOVED`？** 这是 GPU 驱动复位（TDR），与面板无关（面板不触碰游戏 D3D 设备），可检查超频 / 驱动版本。
-- **隔帧推理（VRNR）值得开吗？** 相机平移会有 30Hz 锯齿感、光追游戏中可能闪烁——保持默认关闭可获得最平滑的体验。
-
----
 
 ## 致谢与许可
 
-- 上游算法：[xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler)（本仓库为其分支的中文增强版）
-- 设计令牌参考：[creeper-qt](https://github.com/creeper5820/creeper-qt)（MIT）
+- 上游算法：[xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler)（MIT，本仓库为其增强分支）
+- 设计令牌参考：[creeper-qt](https://github.com/creeper5820/creeper-qt)（MIT）BlueMiku 主题包
+- 致谢 [Dagherbou/OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR)、[OptiScaler](https://github.com/optiscaler/OptiScaler)、[clshortfuse/RenoDX](https://github.com/clshortfuse/renodx)、[AMD FidelityFX](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)（RCAS）、[Community Shaders](https://github.com/doodlegabe/CommunityShaders) 团队
+
+本项目以 MIT 许可开源，详见 [LICENSE](LICENSE)。
