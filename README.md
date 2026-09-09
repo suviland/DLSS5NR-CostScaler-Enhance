@@ -7,6 +7,11 @@
 A standalone proxy DLL and companion toolset for NVIDIA DLSS-NR (DirectX 12) that adds **resolution scaling** and **GPU cost control**. It runs the neural reconstruction model at a reduced resolution while preserving native 1:1 geometry, fine textures, text, and edges via a high-frequency matched-residual composite shader — **decoupling DLSS-NR's GPU cost from the display resolution without introducing blur**.
 
 Designed to work alongside RenoDX addons, and with any game, engine, or injector that calls `nvngx_dlssnr.dll` over DirectX 12. Tested with clshortfuse's DLSS addon (`renodx-dlss.addon64`).
+<img width="803" height="762" alt="image" src="https://github.com/user-attachments/assets/e4f5a83d-f4a0-44fd-95b4-e2b4f10658c0" />
+<img width="803" height="1008" alt="image" src="https://github.com/user-attachments/assets/34ffa791-84ae-4019-92ef-19c7df4a80d8" />
+<img width="793" height="902" alt="image" src="https://github.com/user-attachments/assets/5aad0b9d-d205-4791-a1b7-73b83bd83468" />
+<img width="784" height="903" alt="image" src="https://github.com/user-attachments/assets/e3f8b7e2-4823-461a-a768-4b548b5d1886" />
+
 
 ---
 
