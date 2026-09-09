@@ -70,12 +70,18 @@ enum Field {
     F_ENABLE_PROXY = 0, F_SCALE, F_MODE, F_TRANSFER, F_COLOR, F_SHARP,
     F_ENABLE_HOTKEYS, F_REQUIRE_CTRLALT, F_ENABLE_UI,
     F_KEY_TOGGLE_PROXY, F_KEY_TOGGLE_MODE, F_KEY_SCALEUP, F_KEY_SCALEDOWN, F_KEY_TOGGLEUI,
+    // v0.6.0 upstream features
+    F_DEPTH_AWARE, F_VRNR,
+    F_ANAMORPHIC, F_SCALE_X, F_SCALE_Y,
+    F_USE_CUSTOM_NR, F_NR_STYLE, F_NR_INTENSITY, F_NR_LOCAL_STRUCT, F_NR_LOCAL_TONE,
+    F_NR_SKIN_STRUCT, F_NR_AUTO_MASK,
+    F_VRNR_BLEND, F_VRNR_SCHED,
     F_COUNT
 };
 
 struct UiValues {
     bool   enableProxy     = true;
-    float  scale           = 0.75f;  // 0.25 .. 1.00
+    float  scale           = 0.75f;  // 0.25 .. 2.00
     int    mode            = 1;      // 1 = Matched Residual, 0 = Bilinear
     float  transfer        = 1.0f;   // 0 .. 2
     float  color           = 1.0f;   // 0 .. 1
@@ -89,6 +95,21 @@ struct UiValues {
     int    keyScaleDown    = VK_NEXT;
     int    keyToggleUi     = VK_F11;
     int    uiLanguage      = L_ZH;   // dlssnr_ui::Lang: 0=zh 1=en 2=ru 3=ko
+    // v0.6.0 upstream features
+    bool   depthAware      = true;   // EnableDepthAwareResolve
+    int    vrnrInterval    = 1;      // 1 = every frame (VRNR off), 2, 3
+    bool   vrnrBlend       = true;   // Plan A: motion-adaptive blend on skipped frames
+    bool   vrnrSched       = false;  // Plan D: adaptive scheduling while moving
+    bool   anamorphic      = false;  // EnableAnamorphic
+    float  scaleX          = 0.65f;  // 0.25 .. 2.00
+    float  scaleY          = 0.85f;  // 0.25 .. 2.00
+    bool   useCustomNR     = false;  // [DLSSNR_Settings] UseCustomSettings
+    int    nrStyle         = 0;      // 0 = Balanced, 1 = Sharp, 2 = Cinematic
+    float  nrIntensity     = 1.0f;   // 0 .. 2
+    float  nrLocalStruct   = 1.0f;   // 0 .. 2
+    float  nrLocalTone     = 1.0f;   // 0 .. 2
+    float  nrSkinStruct    = -1.0f;  // -1 (auto) .. 2
+    bool   nrAutoMask      = false;  // UseAutoMask
 
     bool Equals(const UiValues& o) const {
         return enableProxy == o.enableProxy && scale == o.scale && mode == o.mode &&
@@ -97,7 +118,14 @@ struct UiValues {
                enableUi == o.enableUi && keyToggleProxy == o.keyToggleProxy &&
                keyToggleMode == o.keyToggleMode && keyScaleUp == o.keyScaleUp &&
                keyScaleDown == o.keyScaleDown && keyToggleUi == o.keyToggleUi &&
-               uiLanguage == o.uiLanguage;
+               uiLanguage == o.uiLanguage &&
+               depthAware == o.depthAware && vrnrInterval == o.vrnrInterval &&
+               vrnrBlend == o.vrnrBlend && vrnrSched == o.vrnrSched &&
+               anamorphic == o.anamorphic && scaleX == o.scaleX && scaleY == o.scaleY &&
+               useCustomNR == o.useCustomNR && nrStyle == o.nrStyle &&
+               nrIntensity == o.nrIntensity && nrLocalStruct == o.nrLocalStruct &&
+               nrLocalTone == o.nrLocalTone && nrSkinStruct == o.nrSkinStruct &&
+               nrAutoMask == o.nrAutoMask;
     }
 };
 
@@ -287,7 +315,7 @@ struct Fonts {
 // ============================================================================
 // Row model + bilingual labels
 // ============================================================================
-enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_KEY, RK_FOOTER, RK_LINK };
+enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_SEG3, RK_KEY, RK_FOOTER, RK_LINK, RK_VCHIPS, RK_LABEL };
 
 // Note: RowText4 is defined at the top of this file (line ~43) for LANG_PICK.
 
@@ -307,13 +335,29 @@ static const RowText4* RowTextFor(Field f) {
         { L"\u63d0\u9ad8\u7f29\u653e",                                               L"Scale Up",                                  L"\u0423\u0432\u0435\u043b\u0438\u0447\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431", L"\ube44\uc728 \ub192\uc774\uae30" },                     // F_KEY_SCALEUP
         { L"\u964d\u4f4e\u7f29\u653e",                                               L"Scale Down",                                L"\u0423\u043c\u0435\u043d\u044c\u0448\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431", L"\ube44\uc728 \ub0ae\ucd94\uae30" },                     // F_KEY_SCALEDOWN
         { L"\u5f00\u5173\u9762\u677f",                                               L"Toggle Panel",                              L"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u043f\u0430\u043d\u0435\u043b\u044c", L"\ud328\ub110 \ud1a0\uae00" },   // F_KEY_TOGGLEUI
+        { L"深度感知轮廓保持",                                                   L"Depth-Aware Resolve",                       L"Учёт глубины",                         L"깊이 인식 리졸브" },        // F_DEPTH_AWARE
+        { L"隔帧推理间隔",                                                   L"Frame Interval",                            L"Интервал кадров",                      L"프레임 간격" },             // F_VRNR (chips)
+        { L"隔帧推理间隔",                                                   L"Frame Interval",                            L"Интервал кадров",                      L"프레임 간격" },             // F_VRNR (chips)
+        { L"非均匀缩放（实验）",                                                 L"Anamorphic Scaling (Exp.)",                 L"Анаморфный масштаб",                   L"비대칭 스케일 (실험)" },    // F_ANAMORPHIC
+        { L"水平缩放",                                                           L"Horizontal Scale",                          L"Горизонтальный масштаб",               L"가로 비율" },               // F_SCALE_X
+        { L"垂直缩放",                                                           L"Vertical Scale",                            L"Вертикальный масштаб",                 L"세로 비율" },               // F_SCALE_Y
+        { L"自定义 NVIDIA NR 参数",                                              L"Custom NVIDIA NR Params",                   L"Свои параметры NVIDIA NR",             L"NVIDIA NR 사용자 지정" },   // F_USE_CUSTOM_NR
+        { L"降噪风格",                                                           L"NR Style",                                  L"Стиль NR",                             L"NR 스타일" },               // F_NR_STYLE
+        { L"降噪强度",                                                           L"NR Intensity",                              L"Интенсивность NR",                     L"NR 강도" },                 // F_NR_INTENSITY
+        { L"局部结构强度",                                                       L"Local Structure Strength",                  L"Локальная структура",                  L"로컬 구조 강도" },          // F_NR_LOCAL_STRUCT
+        { L"局部色调强度",                                                       L"Local Tone Strength",                       L"Локальный тон",                        L"로컬 톤 강도" },            // F_NR_LOCAL_TONE
+        { L"皮肤结构强度",                                                       L"Skin Structure Strength",                   L"Структура кожи",                       L"피부 구조 강도" },          // F_NR_SKIN_STRUCT
+        { L"自动遮罩",                                                           L"Auto Mask",                                 L"Автомаска",                            L"자동 마스크" },             // F_NR_AUTO_MASK
+        { L"跳帧混合",                                                           L"Skip-Frame Blend",                          L"Смешивание пропусков",                 L"스킵 프레임 블렌딩" },      // F_VRNR_BLEND
+        { L"动态跳帧",                                                           L"Adaptive Skip",                             L"Адаптивный пропуск",                   L"적응형 스킵" },             // F_VRNR_SCHED
     };
     int i = (int)f;
     if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return nullptr;
     return &kMap[i];
 }
 // Section ids used as Item.field for RK_SECTION rows
-enum Sec : int { S_PROXY = 0x1000, S_QUALITY = 0x1001, S_KEYS = 0x1002 };
+enum Sec : int { S_PROXY = 0x1000, S_QUALITY = 0x1001, S_KEYS = 0x1002,
+                 S_ADV = 0x1003, S_NR = 0x1004 };
 
 struct Item { int kind; int field; RECT rc; };
 
@@ -322,8 +366,12 @@ inline const RowText4* SecText(int sec) {
     static const RowText4 p = { L"\u4ee3\u7406", L"Proxy", L"\u041f\u0440\u043e\u043a\u0441\u0438", L"\ud504\ub85d\uc2dc" };
     static const RowText4 q = { L"\u753b\u8d28", L"Quality", L"\u041a\u0430\u0447\u0435\u0441\u0442\u0432\u043e", L"\ud488\uc9c8" };
     static const RowText4 k = { L"\u5feb\u6377\u952e", L"Hotkeys", L"\u0413\u043e\u0440\u044f\u0447\u0438\u0435 \u043a\u043b\u0430\u0432\u0438\u0448\u0438", L"\ub2e8\ucd95\ud0a4" };
+    static const RowText4 a = { L"高级", L"Advanced", L"Дополнительно", L"고급" };
+    static const RowText4 n = { L"NVIDIA 降噪", L"NVIDIA NR", L"NVIDIA NR", L"NVIDIA NR" };
     if (sec == S_QUALITY) return &q;
-    if (sec == S_KEYS) return &k;
+    if (sec == S_KEYS)    return &k;
+    if (sec == S_ADV)     return &a;
+    if (sec == S_NR)      return &n;
     return &p;
 }
 
@@ -336,10 +384,23 @@ inline const RowText4 kCapturing = { L"\u6309\u65b0\u952e\u2026 (Esc \u53d6\u6d8
 inline const RowText4 kSaving    = { L"\u4fee\u6539\u4e2d\u2026 \u7a0d\u5019\u81ea\u52a8\u4fdd\u5b58 \u00b7 Saving\u2026", L"Saving\u2026 auto-commit pending", L"\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435\u2026", L"\uc800\uc7a5 \uc911\u2026 \uc790\ub3d9 \uc800\uc7a5 \ub300\uae30" };
 inline const RowText4 kSaved     = { L"\u5df2\u4fdd\u5b58 \u00b7 Saved to nvngx_dlssnr.ini", L"Saved to nvngx_dlssnr.ini", L"\u0421\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u043e \u0432 nvngx_dlssnr.ini", L"nvngx_dlssnr.ini\uc5d0 \uc800\uc7a5\ub428" };
 inline const RowText4 kAutoSave  = { L"\u4fee\u6539\u540e\u81ea\u52a8\u4fdd\u5b58 \u00b7 Auto-saved to nvngx_dlssnr.ini", L"Auto-saved to nvngx_dlssnr.ini", L"\u0410\u0432\u0442\u043e-\u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d\u0438\u0435 \u0432 nvngx_dlssnr.ini", L"nvngx_dlssnr.ini \uc790\ub3d9 \uc800\uc7a5" };
+// NVIDIA NR style segments (RK_SEG3)
+inline const RowText4 kNrBalanced = { L"\u5e73\u8861", L"Balanced",  L"\u0421\u0431\u0430\u043b\u0430\u043d\u0441\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0439", L"\ubc20\ub7f0\uc2a4" };
+inline const RowText4 kNrSharp    = { L"\u9510\u5229", L"Sharp",     L"\u0420\u0435\u0437\u043a\u0438\u0439",                 L"\uc0e4\ud504" };
+inline const RowText4 kNrCinema   = { L"\u7535\u5f71", L"Cinematic", L"\u041a\u0438\u043d\u0435\u043c\u0430\u0442\u043e\u0433\u0440\u0430\u0444\u0438\u0447\u043d\u044b\u0439", L"\uc2dc\ub124\ub9c8" };
+// "Auto" placeholder shown for the -1 (auto) skin-structure value
+inline const RowText4 kAutoLabel  = { L"\u81ea\u52a8", L"Auto", L"\u0410\u0432\u0442\u043e", L"\uc790\ub3d9" };
 
 // Presets for the scale chips row
 struct ChipDef { float v; };
-static const ChipDef kScaleChips[] = { {1.00f}, {0.85f}, {0.80f}, {0.75f}, {0.67f}, {0.50f} };
+static const ChipDef kScaleChips[] = { {2.00f}, {1.50f}, {1.00f}, {0.85f}, {0.80f}, {0.75f}, {0.67f}, {0.50f} };
+
+// Presets for the VRNR interval chips row (1 = every frame / off)
+static const RowText4 kVChip1 = { L"每帧推理", L"Every Frame", L"Каждый кадр", L"매 프레임" };
+static const RowText4 kVChip2 = { L"每2帧",    L"Every 2nd",   L"Через 2",       L"2프레임" };
+static const RowText4 kVChip3 = { L"每3帧",    L"Every 3rd",   L"Через 3",       L"3프레임" };
+struct VChipDef { int v; const RowText4* txt; };
+static const VChipDef kVrnrChips[] = { {1, &kVChip1}, {2, &kVChip2}, {3, &kVChip3} };
 
 // ---------------------------------------------------------------------------
 // Software cursor (in-game overlay). When the proxy hijacks the mouse via raw
@@ -381,12 +442,28 @@ inline void DrawArrowCursor(HDC dc, int x, int y) {
     GdipDeletePath(path);
 }
 
-// Build the ordered row layout for the current width. Returns content height.
-inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, std::vector<Item>& out) {
+// Build the ordered row layout for ONE page of the current width.
+// The panel is split into manager-style pages (top tab bar switches them);
+// every row here uses content-local Y (the tab bar height is added by Panel).
+// Returns the content height of the requested page.
+inline int PageCount() { return 4; }
+// Tab captions (manager-style top tab bar)
+inline const RowText4* PageTabText(int p) {
+    static const RowText4 tabs[4] = {
+        { L"\u57fa\u7840",       L"Basic",       L"\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435",  L"\uae30\ubcf8" },     // 基础
+        { L"\u9ad8\u7ea7",       L"Advanced",    L"\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d.", L"\uace0\uae09" },     // 高级
+        { L"\u964d\u566a NR",    L"NR",          L"\u0428\u0443\u043c\u043e\u0434\u0430\u0432",        L"\ub178\uc774\uc988" },// 降噪 NR
+        { L"\u5feb\u6377\u952e", L"Hotkeys",     L"\u041a\u043b\u0430\u0432\u0438\u0448\u0438",        L"\ub2e8\ucd95\ud0a4" },// 快捷键
+    };
+    if (p < 0 || p >= PageCount()) p = 0;
+    return &tabs[p];
+}
+inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, int page, std::vector<Item>& out) {
     out.clear();
+    if (page < 0 || page >= PageCount()) page = 0;
     const int kX = 16;
     const int kRight = w - 16;
-    int y = overlay ? 48 : 8;
+    int y = 8;
     auto push = [&](int kind, int field, int h) {
         Item it; it.kind = kind; it.field = field;
         it.rc = { kX, y, kRight, y + h };
@@ -395,34 +472,63 @@ inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, 
     };
     auto gap = [&](int g) { y += g; };
 
-    push(RK_OVERVIEW, F_NONE, 30);
-    gap(4);
-    push(RK_SECTION, S_PROXY, 24);                // 代理 Proxy
-    push(RK_TOGGLE, F_ENABLE_PROXY, 32);
-    push(RK_SLIDER, F_SCALE, 48);
-    push(RK_CHIPS, F_SCALE, 28);
-    push(RK_SEG, F_MODE, 54);
-    gap(8);
-    push(RK_SECTION, S_QUALITY, 24);              // 画质 Quality
-    push(RK_SLIDER, F_TRANSFER, 46);
-    push(RK_SLIDER, F_COLOR, 46);
-    push(RK_SLIDER, F_SHARP, 46);
-    gap(8);
-    push(RK_SECTION, S_KEYS, 24);                 // 快捷键 Hotkeys
-    push(RK_TOGGLE, F_ENABLE_HOTKEYS, 32);
-    push(RK_TOGGLE, F_REQUIRE_CTRLALT, 32);
-    push(RK_KEY, F_KEY_TOGGLE_PROXY, 34);
-    push(RK_KEY, F_KEY_TOGGLE_MODE, 34);
-    push(RK_KEY, F_KEY_SCALEUP, 34);
-    push(RK_KEY, F_KEY_SCALEDOWN, 34);
-    push(RK_TOGGLE, F_ENABLE_UI, 32);
-    push(RK_KEY, F_KEY_TOGGLEUI, 34);
-    gap(8);
-    push(RK_FOOTER, F_NONE, 22);
+    if (page == 0) {
+        // ── Page 1: 基础 Basic — proxy + quality ----------------------------
+        push(RK_OVERVIEW, F_NONE, 30);
+        gap(4);
+        push(RK_SECTION, S_PROXY, 24);            // 代理 Proxy
+        push(RK_TOGGLE, F_ENABLE_PROXY, 32);
+        push(RK_SLIDER, F_SCALE, 48);
+        push(RK_CHIPS, F_SCALE, 28);
+        push(RK_SEG, F_MODE, 54);
+        gap(8);
+        push(RK_SECTION, S_QUALITY, 24);          // 画质 Quality
+        push(RK_SLIDER, F_TRANSFER, 46);
+        push(RK_SLIDER, F_COLOR, 46);
+        push(RK_SLIDER, F_SHARP, 46);
+        gap(8);
+    } else if (page == 1) {
+        // ── Page 2: 高级 Advanced (v0.6.0) ---------------------------------
+        push(RK_SECTION, S_ADV, 24);
+        push(RK_TOGGLE, F_DEPTH_AWARE, 32);
+        push(RK_LABEL, F_VRNR, 20);
+        push(RK_VCHIPS, F_VRNR, 30);
+        push(RK_TOGGLE, F_VRNR_BLEND, 32);
+        push(RK_TOGGLE, F_VRNR_SCHED, 32);
+        push(RK_TOGGLE, F_ANAMORPHIC, 32);
+        push(RK_SLIDER, F_SCALE_X, 46);
+        push(RK_SLIDER, F_SCALE_Y, 46);
+        gap(8);
+    } else if (page == 2) {
+        // ── Page 3: NVIDIA 降噪 (v0.6.0) -----------------------------------
+        push(RK_SECTION, S_NR, 24);
+        push(RK_TOGGLE, F_USE_CUSTOM_NR, 32);
+        push(RK_SEG3, F_NR_STYLE, 44);
+        push(RK_SLIDER, F_NR_INTENSITY, 46);
+        push(RK_SLIDER, F_NR_LOCAL_STRUCT, 46);
+        push(RK_SLIDER, F_NR_LOCAL_TONE, 46);
+        push(RK_SLIDER, F_NR_SKIN_STRUCT, 46);
+        push(RK_TOGGLE, F_NR_AUTO_MASK, 32);
+        gap(8);
+    } else {
+        // ── Page 4: 快捷键 Hotkeys ------------------------------------------
+        push(RK_SECTION, S_KEYS, 24);
+        push(RK_TOGGLE, F_ENABLE_HOTKEYS, 32);
+        push(RK_TOGGLE, F_REQUIRE_CTRLALT, 32);
+        push(RK_KEY, F_KEY_TOGGLE_PROXY, 34);
+        push(RK_KEY, F_KEY_TOGGLE_MODE, 34);
+        push(RK_KEY, F_KEY_SCALEUP, 34);
+        push(RK_KEY, F_KEY_SCALEDOWN, 34);
+        push(RK_TOGGLE, F_ENABLE_UI, 32);
+        push(RK_KEY, F_KEY_TOGGLEUI, 34);
+        gap(8);
+    }
+    push(RK_FOOTER, F_NONE, 22);                  // save status on every page
     y += 2;
-    if (withGithub) { push(RK_LINK, F_NONE, 24); y += 6; }
-    else y += 4;
+    y += 4;
     (void)allowKeyEdit;
+    (void)overlay;
+    (void)withGithub;   // GitHub row removed — the header chip is the entry
     return y;
 }
 
@@ -437,6 +543,9 @@ struct PanelHooks {
     // Panel position persistence (backed by the host's ini file).
     bool (*loadPos)(int& x, int& y, void* user) = nullptr;   // false = none saved
     void (*savePos)(int x, int y, void* user) = nullptr;
+    // Panel size persistence (free-resizing windows remember their last size).
+    bool (*loadSize)(int& w, int& h, void* user) = nullptr;  // false = none saved
+    void (*saveSize)(int w, int h, void* user) = nullptr;
 };
 struct PanelOpts {
     bool overlay = false;         // draws own dark header (title + drag + ×)
@@ -448,11 +557,20 @@ enum HitSpecial : int { RI_NONE = -2, RI_CLOSE = -3, RI_DRAG = -4, RI_OVERVIEW =
 
 inline void FieldRange(Field f, float& lo, float& hi) {
     lo = 0.0f; hi = 1.0f;
-    if (f == F_SCALE)      { lo = 0.25f; hi = 1.00f; }
-    else if (f == F_TRANSFER) { lo = 0.0f; hi = 2.0f; }
+    if (f == F_SCALE || f == F_SCALE_X || f == F_SCALE_Y) { lo = 0.25f; hi = 2.00f; }
+    else if (f == F_TRANSFER)      { lo = 0.0f; hi = 2.0f; }
+    else if (f == F_NR_INTENSITY)  { lo = 0.0f; hi = 2.0f; }
+    else if (f == F_NR_LOCAL_STRUCT) { lo = 0.0f; hi = 2.0f; }
+    else if (f == F_NR_LOCAL_TONE)   { lo = 0.0f; hi = 2.0f; }
+    else if (f == F_NR_SKIN_STRUCT)  { lo = -1.0f; hi = 2.0f; }
 }
 inline bool FieldIsBool(Field f) {
-    return f == F_ENABLE_PROXY || f == F_ENABLE_HOTKEYS || f == F_REQUIRE_CTRLALT || f == F_ENABLE_UI;
+    return f == F_ENABLE_PROXY || f == F_ENABLE_HOTKEYS || f == F_REQUIRE_CTRLALT || f == F_ENABLE_UI ||
+           f == F_DEPTH_AWARE || f == F_VRNR_BLEND || f == F_VRNR_SCHED || f == F_ANAMORPHIC ||
+           f == F_USE_CUSTOM_NR || f == F_NR_AUTO_MASK;
+}
+inline bool FieldIsPercent(Field f) {
+    return f == F_SCALE || f == F_SCALE_X || f == F_SCALE_Y;
 }
 inline bool FieldIsKey(Field f) {
     return f == F_KEY_TOGGLE_PROXY || f == F_KEY_TOGGLE_MODE || f == F_KEY_SCALEUP ||
@@ -466,15 +584,27 @@ struct Panel {
     static constexpr ULONGLONG kPullDelay   = 350;   // ms between external pulls
 
     UiValues cur, prev;
+    static constexpr int kTabH = 36;          // manager-style top tab bar height
+    // Free-resize constants (manual drag path used by the in-game overlay;
+    // the console additionally gets native WM_NCHITTEST edge sizing).
+    static constexpr int kResizeZone = 8;     // px strip along right/bottom edges
+    static constexpr int kMinW = 360, kMinH = 280;
     int W = 396, H = 100, contentH = 100, scroll = 0;
+    int page = 0;             // active page (0..PageCount()-1)
+    int tabHot = -1;          // hovered tab index
     std::vector<Item> items;
     bool overlay = false, allowKeyEdit = true, showGithub = true;
     int hot = -1;             // hovered item index
     int drag = -1;            // slider item index being dragged
     bool dragMove = false;    // header window-drag in progress (manual, no modal loop)
     POINT dragOff{};          // cursor offset inside the window at drag start
+    bool resizing = false;    // manual edge-resize in progress (overlay path)
+    int resizeEdge = 0;       // 1 = right, 2 = bottom, 3 = bottom-right corner
+    POINT rsScreen{};         // cursor screen position at resize start
+    int rsW = 0, rsH = 0;     // client size at resize start
     int capIdx = -1;          // key row index awaiting a key
     bool langHot = false;     // header language-switcher is hovered
+    bool ghHot = false;       // header GitHub chip is hovered
     unsigned char keyPrev[256];
     bool dirty = false;
     bool closeHit = false;    // header × clicked (overlay)
@@ -508,13 +638,14 @@ struct Panel {
 };
 
 // Drawing helpers shared by Paint (free functions)
-void DrawHeaderBar(HDC dc, int W, const Fonts& f, const Theme& t, bool langHot);
+void DrawHeaderBar(HDC dc, int W, const Fonts& f, const Theme& t, bool langHot, bool ghHot);
 void DrawOverviewRow(HDC dc, const RECT& rc, const UiValues& v, const Fonts& f, const Theme& t);
 void DrawSectionRow(HDC dc, const RECT& rc, int sec, const Fonts& f, const Theme& t);
 void DrawToggleRow(HDC dc, const RECT& rc, Field field, bool val, bool hot, const Fonts& f, const Theme& t);
 void DrawSliderRow(HDC dc, const RECT& rc, Field field, float val, bool hot, const Fonts& f, const Theme& t);
 void DrawChipsRow(HDC dc, const RECT& rc, float scale, const Fonts& f, const Theme& t);
 void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const Theme& t);
+void DrawSeg3Row(HDC dc, const RECT& rc, int style, const Fonts& f, const Theme& t);
 void DrawKeyRow(HDC dc, const RECT& rc, Field field, int vk, bool requireMods, bool hot, bool capturing,
                 const Fonts& f, const Theme& t);
 void DrawFooterRow(HDC dc, const RECT& rc, const Fonts& f, const Theme& t, bool dirty,
@@ -528,6 +659,12 @@ inline bool GetBool(const UiValues& v, Field f) {
     case F_ENABLE_HOTKEYS: return v.enableHotkeys;
     case F_REQUIRE_CTRLALT: return v.requireCtrlAlt;
     case F_ENABLE_UI: return v.enableUi;
+    case F_DEPTH_AWARE: return v.depthAware;
+    case F_VRNR_BLEND: return v.vrnrBlend;
+    case F_VRNR_SCHED: return v.vrnrSched;
+    case F_ANAMORPHIC: return v.anamorphic;
+    case F_USE_CUSTOM_NR: return v.useCustomNR;
+    case F_NR_AUTO_MASK: return v.nrAutoMask;
     default: return false;
     }
 }
@@ -537,6 +674,12 @@ inline void SetBool(UiValues& v, Field f, bool b) {
     case F_ENABLE_HOTKEYS: v.enableHotkeys = b; break;
     case F_REQUIRE_CTRLALT: v.requireCtrlAlt = b; break;
     case F_ENABLE_UI: v.enableUi = b; break;
+    case F_DEPTH_AWARE: v.depthAware = b; break;
+    case F_VRNR_BLEND: v.vrnrBlend = b; break;
+    case F_VRNR_SCHED: v.vrnrSched = b; break;
+    case F_ANAMORPHIC: v.anamorphic = b; break;
+    case F_USE_CUSTOM_NR: v.useCustomNR = b; break;
+    case F_NR_AUTO_MASK: v.nrAutoMask = b; break;
     default: break;
     }
 }
@@ -546,6 +689,12 @@ inline float GetFloat(const UiValues& v, Field f) {
     case F_TRANSFER: return v.transfer;
     case F_COLOR: return v.color;
     case F_SHARP: return v.sharpness;
+    case F_SCALE_X: return v.scaleX;
+    case F_SCALE_Y: return v.scaleY;
+    case F_NR_INTENSITY: return v.nrIntensity;
+    case F_NR_LOCAL_STRUCT: return v.nrLocalStruct;
+    case F_NR_LOCAL_TONE: return v.nrLocalTone;
+    case F_NR_SKIN_STRUCT: return v.nrSkinStruct;
     default: return 0.0f;
     }
 }
@@ -555,6 +704,12 @@ inline void SetFloat(UiValues& v, Field f, float x) {
     case F_TRANSFER: v.transfer = x; break;
     case F_COLOR: v.color = x; break;
     case F_SHARP: v.sharpness = x; break;
+    case F_SCALE_X: v.scaleX = x; break;
+    case F_SCALE_Y: v.scaleY = x; break;
+    case F_NR_INTENSITY: v.nrIntensity = x; break;
+    case F_NR_LOCAL_STRUCT: v.nrLocalStruct = x; break;
+    case F_NR_LOCAL_TONE: v.nrLocalTone = x; break;
+    case F_NR_SKIN_STRUCT: v.nrSkinStruct = x; break;
     default: break;
     }
 }
@@ -598,16 +753,31 @@ inline int SliderToX(Field f, const RECT& rc, float v) {
 // Panel implementation
 // ============================================================================
 inline void Panel::RebuildLayout() {
-    contentH = BuildLayout(W, overlay, allowKeyEdit, showGithub, items);
+    int pageH = BuildLayout(W, overlay, allowKeyEdit, showGithub, page, items);
+    contentH = pageH + kTabH;   // tab bar occupies the strip above the rows
     int maxScroll = contentH > H ? contentH - H : 0;
     if (scroll > maxScroll) scroll = maxScroll;
     if (scroll < 0) scroll = 0;
 }
+// Y of the first content row in window coordinates (header + tab bar).
+inline int Panel_ContentTop(const Panel& p) { return (p.overlay ? 40 : 0) + Panel::kTabH; }
 // ============================ row painters ================================
-inline void DrawHeaderBar(HDC dc, int W, const Fonts& f, const Theme& t, bool langHot) {
+inline void DrawHeaderBar(HDC dc, int W, const Fonts& f, const Theme& t, bool langHot, bool ghHot) {
     BlitFill(dc, 0, 0, W, 40, t.headerBg);
     BlitFill(dc, 0, 39, W, 1, t.line);
-    BlitLabel(dc, 16, 8, W - 130, 24, L"DLSSNR Cost Scaler", t.text, f.bold);
+    BlitLabel(dc, 16, 8, W - 180, 24, L"DLSSNR Cost Scaler", t.text, f.bold);
+    // Git chip — opens the project homepage from every page / both hosts.
+    int gx = W - 156, gy = 8, gw = 40, gh = 24, gr = 7;
+    if (ghHot) {
+        BlitRound(dc, gx, gy, gw, gh, gr, t.accent);
+        BlitText(dc, gx, gy, gw, gh, L"Git", t.onAccent, f.bold,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    } else {
+        BlitRound(dc, gx, gy, gw, gh, gr, t.strip);
+        BlitFrame(dc, gx, gy, gw - 1, gh - 1, gr, t.line);
+        BlitText(dc, gx, gy, gw, gh, L"Git", t.accent, f.bold,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
     // Language switcher chip — click cycles zh → en / ru / ko.
     // Solid rounded rectangle (accent fill + onPrimary label).
     int chipW = 40, chipH = 24, chipR = 7;
@@ -654,7 +824,9 @@ inline void DrawToggleRow(HDC dc, const RECT& rc, Field field, bool val, bool ho
 inline void DrawSliderRow(HDC dc, const RECT& rc, Field field, float val, bool hot, const Fonts& f, const Theme& t) {
     const RowText4* rt = RowTextFor(field);
     wchar_t vb[24];
-    if (field == F_SCALE) swprintf_s(vb, L"%d%%", (int)(val * 100.0f + 0.5f));
+    if (FieldIsPercent(field)) swprintf_s(vb, L"%d%%", (int)(val * 100.0f + 0.5f));
+    else if (field == F_NR_SKIN_STRUCT && val <= -0.995f)
+        swprintf_s(vb, L"%s", LANG_PICK(kAutoLabel));      // -1.0 = auto
     else swprintf_s(vb, L"%.2f", val);
     BlitLabel(dc, rc.left, rc.top, (rc.right - rc.left) - 74, 18,
               LANG_PICK(*rt), t.text, f.base);
@@ -672,8 +844,7 @@ inline void DrawSliderRow(HDC dc, const RECT& rc, Field field, float val, bool h
     int ix = px + trackH / 2 + 2;
     if (ix < rc.right - 6)
         BlitRound(dc, ix, ty, rc.right - ix, trackH, trackH / 2, t.line);
-    BlitRound(dc, rc.right - 5, tc - 2, 4, 4, 2, t.dim);   // stop indicator
-    // No grip knob — the filled track end itself is the handle (clean M3E).
+    // No grip knob, no stop indicator — clean M3E pill track (UI review).
 }
 inline void DrawChipsRow(HDC dc, const RECT& rc, float scale, const Fonts& f, const Theme& t) {
     const int n = (int)(sizeof(kScaleChips) / sizeof(kScaleChips[0]));
@@ -691,8 +862,29 @@ inline void DrawChipsRow(HDC dc, const RECT& rc, float scale, const Fonts& f, co
         BlitText(dc, x, cy, cw, 24, buf, on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
-inline void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const Theme& t) {
-    int gap = 8;
+// Small dim caption row (used above the VRNR interval chips)
+inline void DrawLabelRow(HDC dc, const RECT& rc, Field field, const Fonts& f, const Theme& t) {
+    const RowText4* rt = RowTextFor(field);
+    BlitLabel(dc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+              LANG_PICK(*rt), t.dim, f.sub);
+}
+// VRNR interval chips: [每帧推理] [每2帧] [每3帧]
+inline void DrawVChipsRow(HDC dc, const RECT& rc, int interval, const Fonts& f, const Theme& t) {
+    const int n = (int)(sizeof(kVrnrChips) / sizeof(kVrnrChips[0]));
+    int gap = 6, area = rc.right - rc.left;
+    int cw = (area - gap * (n - 1)) / n;
+    int cy = rc.top + (rc.bottom - rc.top - 24) / 2;
+    for (int i = 0; i < n; ++i) {
+        int x = rc.left + i * (cw + gap);
+        int v = kVrnrChips[i].v;
+        bool on = (interval == v);
+        if (on) BlitRound(dc, x, cy, cw, 24, 12, t.accent);
+        else { BlitRound(dc, x, cy, cw, 24, 12, t.strip); BlitFrame(dc, x, cy, cw - 1, 23, 12, t.line); }
+        BlitText(dc, x, cy, cw, 24, LANG_PICK(*kVrnrChips[i].txt),
+                 on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+}
+inline void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const Theme& t) {    int gap = 8;
     int bw = (rc.right - rc.left - gap) / 2;
     auto seg = [&](int x0, bool active, const RowText4& txt) {
         int y0 = rc.top + (rc.bottom - rc.top - 28) / 2, h = 28;
@@ -703,6 +895,21 @@ inline void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const T
     };
     seg(rc.left,             mode == 1, kMatched);
     seg(rc.left + bw + gap,  mode == 0, kBilinear);
+}
+// Three-segment selector — NVIDIA NR style: Balanced / Sharp / Cinematic.
+inline void DrawSeg3Row(HDC dc, const RECT& rc, int style, const Fonts& f, const Theme& t) {
+    const int gap = 6;
+    const int bw = (rc.right - rc.left - gap * 2) / 3;
+    const RowText4* labels[3] = { &kNrBalanced, &kNrSharp, &kNrCinema };
+    int y0 = rc.top + (rc.bottom - rc.top - 28) / 2, h = 28;
+    for (int i = 0; i < 3; ++i) {
+        int x0 = rc.left + i * (bw + gap);
+        bool active = (style == i);
+        if (active) BlitRound(dc, x0, y0, bw, h, 14, t.accent);
+        else { BlitRound(dc, x0, y0, bw, h, 14, t.strip); BlitFrame(dc, x0, y0, bw - 1, h - 1, 14, t.line); }
+        BlitLabel(dc, x0 + 8, y0, bw - 16, h, LANG_PICK(*labels[i]),
+                  active ? t.onAccent : t.text, f.base);
+    }
 }
 inline void DrawKeyRow(HDC dc, const RECT& rc, Field field, int vk, bool requireMods, bool hot, bool capturing,
                        const Fonts& f, const Theme& t) {
@@ -739,6 +946,27 @@ inline void DrawLinkRow(HDC dc, const RECT& rc, const Fonts& f, const Theme& t, 
     BlitText(dc, rc.left + 2, rc.top, 64, h, L"GitHub", c1, f.bold, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     BlitText(dc, rc.left + 64, rc.top, (rc.right - rc.left) - 66, h, kGithubShow, c2, f.sub,
              DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+// Manager-style top tab bar: equal-width pills, active = accent fill.
+inline void DrawTabBar(HDC dc, int W, int y0, int page, int tabHot, const Fonts& f, const Theme& t) {
+    const int n = PageCount();
+    const int pad = 6, gap = 6;
+    const int areaW = W - 32;
+    const int tw = (areaW - gap * (n - 1)) / n;
+    const int th = Panel::kTabH - pad * 2;
+    const int ty = y0 + pad;
+    for (int i = 0; i < n; ++i) {
+        int x = 16 + i * (tw + gap);
+        bool on = (i == page);
+        if (on) BlitRound(dc, x, ty, tw, th, th / 2, t.accent);
+        else {
+            if (i == tabHot) BlitRound(dc, x, ty, tw, th, th / 2, t.strip);
+            BlitFrame(dc, x, ty, tw - 1, th - 1, th / 2, t.line);
+        }
+        BlitText(dc, x, ty, tw, th, LANG_PICK(*PageTabText(i)),
+                 on ? t.onAccent : (i == tabHot ? t.text : t.dim), f.base,
+                 DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
 }
 inline int Panel::HitIndex(int x, int yc) const {
     for (int i = (int)items.size() - 1; i >= 0; --i) {
@@ -817,11 +1045,12 @@ inline void Panel::Paint(HWND hwnd) {
     HGDIOBJ oldBmp = bmp ? SelectObject(mem, bmp) : nullptr;
 
     BlitFill(mem, 0, 0, W, H, t.bg);
-    if (overlay) DrawHeaderBar(mem, W, fonts, t, langHot);
-    int clipTop = overlay ? 40 : 0;
+    if (overlay) DrawHeaderBar(mem, W, fonts, t, langHot, ghHot);
+    int contentTop = Panel_ContentTop(*this);
+    DrawTabBar(mem, W, contentTop - kTabH, page, tabHot, fonts, t);
     int saved = SaveDC(mem);
-    IntersectClipRect(mem, 0, clipTop, W, H);
-    SetViewportOrgEx(mem, 0, -scroll, nullptr);
+    IntersectClipRect(mem, 0, contentTop, W, H);
+    SetViewportOrgEx(mem, 0, contentTop - scroll, nullptr);
     ULONGLONG now = GetTickCount64();
     for (int i = 0; i < (int)items.size(); ++i) {
         const Item& it = items[i];
@@ -833,6 +1062,9 @@ inline void Panel::Paint(HWND hwnd) {
         case RK_SLIDER:   DrawSliderRow(mem, it.rc, (Field)it.field, GetFloat(cur, (Field)it.field), hov, fonts, t); break;
         case RK_CHIPS:    DrawChipsRow(mem, it.rc, cur.scale, fonts, t); break;
         case RK_SEG:      DrawSegRow(mem, it.rc, cur.mode, fonts, t); break;
+        case RK_SEG3:     DrawSeg3Row(mem, it.rc, cur.nrStyle, fonts, t); break;
+        case RK_VCHIPS:   DrawVChipsRow(mem, it.rc, cur.vrnrInterval, fonts, t); break;
+        case RK_LABEL:    DrawLabelRow(mem, it.rc, (Field)it.field, fonts, t); break;
         case RK_KEY:      DrawKeyRow(mem, it.rc, (Field)it.field, GetKey(cur, (Field)it.field), cur.requireCtrlAlt, hov, (capIdx == i), fonts, t); break;
         case RK_FOOTER:   DrawFooterRow(mem, it.rc, fonts, t, dirty, now, flashAt, footer); break;
         case RK_LINK:     DrawLinkRow(mem, it.rc, fonts, t, hov); break;
@@ -840,6 +1072,12 @@ inline void Panel::Paint(HWND hwnd) {
         }
     }
     RestoreDC(mem, saved);
+
+    // Resize grip (bottom-right) — affordance for the free-resize edges.
+    for (int i = 0; i < 3; ++i)
+        for (int j = 0; j < 3; ++j)
+            if (i + j >= 2)
+                BlitRound(mem, W - 14 + i * 4, H - 14 + j * 4, 3, 3, 1, t.line);
 
     // Software cursor on top of everything (raw-input virtual cursor mode).
     if (g_softCursor) DrawArrowCursor(mem, g_softCursorX, g_softCursorY);
@@ -864,6 +1102,21 @@ inline void Panel::OnMouseMove(HWND hwnd, int x, int y) {
                      SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         return;
     }
+    if (resizing) {
+        // Manual edge resize (in-game virtual-cursor path). The real cursor
+        // position is read directly — hook events arrive clamped to the
+        // (changing) client rect, which would freeze the delta at the edge.
+        POINT sp; GetCursorPos(&sp);
+        int nw = rsW, nh = rsH;
+        if (resizeEdge & 1) nw = rsW + (sp.x - rsScreen.x);
+        if (resizeEdge & 2) nh = rsH + (sp.y - rsScreen.y);
+        if (nw < kMinW) nw = kMinW;
+        if (nh < kMinH) nh = kMinH;
+        SetWindowPos(hwnd, nullptr, 0, 0, nw, nh,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return;
+    }
     if (drag >= 0 && drag < (int)items.size()) {
         const Item& it = items[drag];
         float v = SliderFromX((Field)it.field, it.rc, x);
@@ -872,11 +1125,25 @@ inline void Panel::OnMouseMove(HWND hwnd, int x, int y) {
         InvalidateRect(hwnd, nullptr, FALSE);
     } else {
         bool newLangHot = overlay && y < 40 && x >= W - 110 && x < W - 70;
-        int idx = (y < 40) ? -1 : HitIndex(x, y + scroll);
-        bool hoverChanged = (idx != hot) || (newLangHot != langHot);
+        bool newGhHot   = overlay && y < 40 && x >= W - 156 && x < W - 116;
+        int contentTop = Panel_ContentTop(*this);
+        int tabTop = contentTop - kTabH;
+        int newTabHot = -1;
+        if (y >= tabTop && y < contentTop) {
+            // Tab bar strip — hovered pill (both header-less console and overlay).
+            int n = PageCount(), gap = 6, areaW = W - 32;
+            int tw = (areaW - gap * (n - 1)) / n;
+            int t = (x - 16) / (tw + gap);
+            if (x >= 16 && t >= 0 && t < n) newTabHot = t;
+        }
+        int idx = (y < contentTop) ? -1 : HitIndex(x, y - contentTop + scroll);
+        bool hoverChanged = (idx != hot) || (newTabHot != tabHot) ||
+                            (newLangHot != langHot) || (newGhHot != ghHot);
         if (hoverChanged) {
             hot = idx;
+            tabHot = newTabHot;
             langHot = newLangHot;
+            ghHot = newGhHot;
             TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
             TrackMouseEvent(&tme);
         }
@@ -891,6 +1158,11 @@ inline void Panel::OnMouseMove(HWND hwnd, int x, int y) {
 inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
     ULONGLONG now = GetTickCount64();
     if (overlay && y < 40) {
+        // Git chip — open the project homepage (always visible on all pages).
+        if (x >= W - 156 && x < W - 116) {
+            ShellExecuteW(nullptr, L"open", kGithubUrl, nullptr, nullptr, SW_SHOWNORMAL);
+            return;
+        }
         // Language switcher chip (only meaningful in overlay mode).
         if (x >= W - 110 && x < W - 70) {
             CycleLang();
@@ -919,7 +1191,38 @@ inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
         if (GetCapture() != hwnd) SetCapture(hwnd);
         return;
     }
-    int idx = HitIndex(x, y + scroll);
+    // Manual edge resize (in-game virtual-cursor path): right / bottom /
+    // bottom-right corner strips. The console ALSO gets native WM_NCHITTEST
+    // edge sizing, and the native modal loop wins there — the two coexist.
+    if (y >= H - kResizeZone || x >= W - kResizeZone) {
+        int edge = 0;
+        if (x >= W - kResizeZone && y >= H - kResizeZone) edge = 3;
+        else if (x >= W - kResizeZone) edge = 1;
+        else edge = 2;
+        resizing = true;
+        resizeEdge = edge;
+        POINT sp{ x, y };
+        ClientToScreen(hwnd, &sp);
+        rsScreen = sp;
+        RECT cr; GetClientRect(hwnd, &cr);
+        rsW = cr.right; rsH = cr.bottom;
+        return;
+    }
+    // Manager-style tab bar: click a pill to switch page.
+    int contentTop = Panel_ContentTop(*this);
+    if (y < contentTop) {
+        int n = PageCount(), gap = 6, areaW = W - 32;
+        int tw = (areaW - gap * (n - 1)) / n;
+        int t = (x - 16) / (tw + gap);
+        if (x >= 16 && t >= 0 && t < n && t != page) {
+            page = t;
+            scroll = 0;
+            hot = -1; drag = -1; capIdx = -1;   // nothing carries across pages
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return;
+    }
+    int idx = HitIndex(x, y - contentTop + scroll);
     hot = idx;
     if (idx < 0 || idx >= (int)items.size()) {
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -964,6 +1267,35 @@ inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
         SetDirty(F_MODE, now, hooks);
         break;
     }
+    case RK_SEG3: {
+        int w = it.rc.right - it.rc.left, gap = 6;
+        int bw = (w - gap * 2) / 3;
+        int rel = x - it.rc.left;
+        int sel = -1;                                  // [Balanced] [Sharp] [Cinematic]
+        for (int i = 0; i < 3; ++i) {
+            int x0 = i * (bw + gap);
+            if (rel >= x0 && rel < x0 + bw) { sel = i; break; }
+        }
+        if (sel >= 0) { cur.nrStyle = sel; SetDirty(F_NR_STYLE, now, hooks); }
+        break;
+    }
+    case RK_VCHIPS: {
+        int areaW = it.rc.right - it.rc.left;
+        int gap = 6, n = (int)(sizeof(kVrnrChips) / sizeof(kVrnrChips[0]));
+        int cw = (areaW - gap * (n - 1)) / n;
+        int pos = x - it.rc.left;
+        if (pos >= 0) {
+            int c = pos / (cw + gap);
+            if (c >= 0 && c < n) {
+                int inside = pos - c * (cw + gap);
+                if (inside <= cw) {
+                    cur.vrnrInterval = kVrnrChips[c].v;
+                    SetDirty(F_VRNR, now, hooks);
+                }
+            }
+        }
+        break;
+    }
     case RK_KEY: {
         if (allowKeyEdit && FieldIsKey((Field)it.field)) {
             if (capIdx == idx) capIdx = -1;
@@ -984,6 +1316,14 @@ inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
 inline void Panel::OnLButtonUp(HWND hwnd, int x, int y) {
     (void)x; (void)y;
     dragMove = false;
+    if (resizing) {
+        resizing = false;
+        if (hooks.saveSize) {
+            RECT cr; GetClientRect(hwnd, &cr);
+            if (cr.right >= kMinW && cr.bottom >= kMinH)
+                hooks.saveSize(cr.right, cr.bottom, hooks.user);
+        }
+    }
     // ALWAYS release: BOTH slider drags and header window-drags take the
     // capture, and gating the release on (drag >= 0) alone leaked it after
     // every header drag — the window then held the system's single mouse
@@ -1002,7 +1342,10 @@ inline void Panel::ResetInput(HWND hwnd) {
     dragMove = false;
     drag = -1;
     hot = -1;
+    tabHot = -1;
     langHot = false;
+    ghHot = false;
+    resizing = false;
     capIdx = -1;
     closeHit = false;
     if (hwnd) InvalidateRect(hwnd, nullptr, FALSE);
@@ -1026,10 +1369,10 @@ inline bool Panel::Handle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, const Panel
         return true;
     case WM_SETCURSOR: {
         if (LOWORD(lp) != HTCLIENT) return false;
-        bool hand = (hot >= 0) || (drag >= 0) || langHot;
-        if (!hand && overlay) {
+        bool hand = (hot >= 0) || (drag >= 0) || langHot || (tabHot >= 0);
+        if (!hand) {
             POINT p; GetCursorPos(&p); ScreenToClient(hwnd, &p);
-            if (p.y < 40) hand = true;
+            if (p.y < Panel_ContentTop(*this)) hand = true;   // header + tab bar
         }
         SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
         return true;

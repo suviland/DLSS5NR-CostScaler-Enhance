@@ -40,12 +40,18 @@ cbuffer ResolveConstants : register(b0)
     float gColorStrength;
     uint  gIsSkipFrame;
     uint  gHasDepth;
+    float gMvScaleX;      // native-resolution motion-vector scale (game-provided)
+    float gMvScaleY;
+    float gVrnrBlend;     // Plan A strength (0 = off, up to 1)
+    uint  gHasMv;         // 1 = gMv valid
 };
 
-Texture2D<float4>   gSmallInput    : register(t0); // Downsampled model input (g_colorSmall)
-Texture2D<float4>   gSmallOutput   : register(t1); // Model output (g_outputSmall)
+Texture2D<float4>   gSmallInput    : register(t0); // Downsampled CURRENT frame (fresh every frame)
+Texture2D<float4>   gSmallOutput   : register(t1); // Model output (g_outputSmall; stale on skip frames)
 Texture2D<float4>   gNativeColor   : register(t2); // Pristine native frame (origColor)
 Texture2D<float>    gDepth         : register(t3); // Native depth buffer (if available)
+Texture2D<float4>   gLastInput     : register(t4); // Downsampled input the NR last saw (stale)
+Texture2D<float4>   gMv            : register(t5); // Native motion vectors (if available)
 RWTexture2D<float4> gResolveTarget : register(u0); // Destination (origOutput)
 
 SamplerState gLinear : register(s0);
@@ -88,7 +94,7 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
         // Blend with native if TransferStrength < 1.0 or on skip frames
         if (gIsSkipFrame != 0)
         {
-            float3 inSample = gSmallInput.SampleLevel(gLinear, uv, 0).rgb;
+            float3 inSample = gLastInput.SampleLevel(gLinear, uv, 0).rgb;  // input the NR last saw (stale)
             float lumaIn = dot(max(inSample, 0.0), kLuma);
             float lumaNative = dot(max(original, 0.0), kLuma);
             float diff = abs(lumaIn - lumaNative);
@@ -139,11 +145,17 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
     float3 original = s_nativeTile[tid.y + 1][tid.x + 1];
 
     // 2. Sample neural input and output at standard screen UV
+    //    t0 is refreshed EVERY frame (even skip frames) so it is the fresh
+    //    current-frame low-res for the Plan-A blend; the NR delta baseline
+    //    must stay the input the NR actually saw (stale snapshot, t4).
     float3 smallInput = gSmallInput.SampleLevel(gLinear, uv, 0).rgb;
     float3 smallOutput = gSmallOutput.SampleLevel(gLinear, uv, 0).rgb;
+    float3 editBase = smallInput;
+    if (gIsSkipFrame != 0)
+        editBase = gLastInput.SampleLevel(gLinear, uv, 0).rgb;
 
     // 3. Compute neural delta / edit
-    float3 edit = smallOutput - smallInput;
+    float3 edit = smallOutput - editBase;
 
     // Chroma vs Luma control for ColorStrength
     float editLuma = dot(edit, kLuma);
@@ -175,19 +187,40 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
     // Apply TransferStrength
     float3 scaledEdit = controlledEdit * gTransferStrength;
 
-    // On skip frames, detect motion/edge transitions by comparing cached neural input with fresh native color.
-    // When scene content moves, smoothly fade the stale delta so the pixel displays the clean 1:1 native game pixel!
+    // On skip frames, detect motion/edge transitions by comparing the input the
+    // NR last saw with fresh native color. When scene content moves, smoothly
+    // fade the stale delta so the pixel displays the clean 1:1 native pixel.
+    // Plan A (motion-adaptive blend): the base itself follows motion too —
+    // static areas keep the raw native (sharpest, denoised by the stale edit),
+    // moving areas blend in the bilinear upscale of the CURRENT low-res frame
+    // (a cheap low-pass spatial fallback that suppresses noise pulsing).
+    float3 result;
     if (gIsSkipFrame != 0)
     {
-        float origLuma = dot(max(original, 0.0), kLuma);
-        float inLuma   = dot(max(smallInput, 0.0), kLuma);
-        float diff     = abs(inLuma - origLuma);
+        float origLuma = dot(max(editBase, 0.0), kLuma);
+        float inLuma   = dot(max(original, 0.0), kLuma);
+        float diff     = abs(origLuma - inLuma);
         float weight   = saturate(1.0 - (diff * 2.5) / (origLuma + inLuma + 0.05));
         scaledEdit *= weight;
-    }
 
-    // Base native frame + scaled neural delta
-    float3 result = max(original + scaledEdit, 0.0);
+        float mFactor = 0.0;
+        if (gVrnrBlend > 0.0)
+        {
+            float motion = 0.0;
+            if (gHasMv != 0)
+            {
+                float2 mv = gMv.Load(int3(id.xy, 0)).xy;
+                motion = length(mv * float2(gMvScaleX, gMvScaleY));
+                if (motion > 64.0) motion = 64.0;   // clamp outliers (UI fades / invalid MVs)
+            }
+            mFactor = gVrnrBlend * saturate(motion / 1.5);   // ≥1.5 px of motion → fully fresh
+        }
+        result = max(lerp(original, smallInput, mFactor) + scaledEdit, 0.0);
+    }
+    else
+    {
+        result = max(original + scaledEdit, 0.0);
+    }
 
     // 4. HDR highlight & shadow guard using luminance ratio (only on evaluated frames to prevent stale luminance clamping)
     if (gIsSkipFrame == 0)
@@ -241,4 +274,44 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
 
     float nativeAlpha = gNativeColor.Load(int3(id.xy, 0)).a;
     gResolveTarget[id.xy] = float4(result, nativeAlpha);
+}
+
+// --- MOTION REDUCE (VRNR adaptive scheduling signal, Plan D) ---
+// One 1x1 R32_UINT accumulator: every 16x16 tile adds its average motion
+// magnitude (in native pixels, x1024 fixed point). The proxy reads the sum
+// back a couple of frames later and derives the per-pixel average.
+cbuffer MotionConstants : register(b0)
+{
+    float gMvScaleXm;
+    float gMvScaleYm;
+    uint  gMvW;
+    uint  gMvH;
+    uint  gHasMvm;
+};
+
+Texture2D<float4>    gMvSrc     : register(t0);
+RWByteAddressBuffer  gMotionSum : register(u0);
+
+groupshared float s_motionTile[256];
+
+[numthreads(16, 16, 1)]
+void CS_Motion(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID)
+{
+    float m = 0.0;
+    if (gHasMvm != 0 && id.x < gMvW && id.y < gMvH)
+    {
+        float2 mv = gMvSrc.Load(int3(id.xy, 0)).xy;
+        m = length(mv * float2(gMvScaleXm, gMvScaleYm));
+        if (m > 64.0) m = 64.0;   // clamp outliers (UI fades / invalid MVs)
+    }
+    s_motionTile[tid.y * 16 + tid.x] = m;
+    GroupMemoryBarrierWithGroupSync();
+    if (tid.x == 0 && tid.y == 0)
+    {
+        float s = 0.0;
+        [unroll]
+        for (int i = 0; i < 256; ++i)
+            s += s_motionTile[i];
+        gMotionSum.InterlockedAdd(0, (uint)min(s * 1024.0, 4294960000.0));
+    }
 }

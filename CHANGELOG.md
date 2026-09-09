@@ -5,6 +5,53 @@ All notable changes to **DLSS5-NR-Boost** are documented here.
 
 ---
 
+## [0.7.0] — 2026-09-09
+
+### 新增 Added
+
+- **VRNR 推理间隔可调**：原「隔帧推理」开关升级为**三档芯片**（每帧推理 / 每2帧 / 每3帧），ini 键 `VrnrInterval`（1~3，1 = 每帧推理即关闭跳帧）；旧 `EnableAlternatingFrames` 键继续兼容（无 `VrnrInterval` 时自动推导）。
+- **跳帧混合（Plan A）**：跳帧时降采样照常执行，resolve 着色器按**逐像素运动矢量幅度**在「原始原生像素」与「当前帧低通（降采样→双线性上采样）」之间插值——静止区域保留原生 + 陈旧 NR 编辑量（最锐利、已降噪），运动区域混入当前帧低通以抑制噪点呼吸感；MV 不可用时混合自动退化为关闭。开关：`VrnrBlend`。
+- **动态跳帧（Plan D）**：新增 CS_Motion 运动量归约 pass（16×16 tile 平均 |MV|，1×1 R32_UINT 累加器 + 4 槽 READBACK 回读环，滞后两帧）；场景运动超过阈值时本帧强制跑 NR，静止时才按间隔跳帧。开关：`VrnrAdaptiveSkip`。
+- 三端同步：游戏内面板 / 独立控制台（「高级」页新增间隔芯片行 + 跳帧混合、动态跳帧开关，四语言）、管理器「面板调试」页（VRNR 三段选择 + 两个开关）；共享内存协议新增 `vrnrInterval / vrnrBlend / vrnrSched`，实时联动。
+
+### 变更 Changed
+
+- 跳帧语义重构：`colorSmall` 改为**每帧刷新**，新增 `inputSnapshot` 快照记录 NR 实际看到的输入；resolve 跳帧路径的编辑量淡出参考由陈旧 t0 改为快照（t4），行为与旧版一致，同时为 Plan A 提供数据。
+- resolve 根签名 SRV 描述符 4→6（t4 快照 / t5 运动矢量）、根常量 10→15，描述符堆 512→1024（帧槽步长 8→11）。
+
+---
+
+## [0.6.2] — 2026-09-09
+
+### 变更 Changed
+
+- **管理器更名 DLSS5NR-CostScaler-Manager**：产物文件名（`build\<版本>\DLSS5NR-CostScaler-Manager.exe`）与窗口标题 / 页头同步更名；版本资源 ProductName 更新为 DLSS5NR-CostScaler。
+- **Git 芯片**：控制台与游戏内面板的标题栏芯片文案由「GitHub」改为「**Git**」（芯片收窄至 40px），点击仍打开项目主页；面板底部的完整 GitHub 链接行移除。
+
+### 修复 Fixed
+
+- **管理器两处按钮的方形圆角**：`BtnOnCard` 的角落底色映射与实际表面不符——「已安装管理」页底部的**一键卸载**在整高卡片内却被按背景取角（方形底色咬掉卡片圆角）；「操作记录」页的**清空 / 分离**位于两卡之间的背景上却被按卡片取角（整枚按钮呈方形色块）。现按页面区分表面：`A_UNINSTALL` 仅页 1 视为卡片上，`A_POPOUT` / `A_CLEAR` 一律视为背景上。
+- **面板滑条端部白点**：移除 M3E 滑条右端的 stop indicator 小圆点（控制台与游戏内面板同步生效）。
+
+---
+
+## [0.6.1] — 2026-09-09
+
+### 新增 Added
+
+- **面板分页化（manager 式横排 tab 条）**：新增特性后面板单页过长（控制台窗口超出屏幕、游戏内面板遮挡过多）——参照管理器的顶部横排 tab 导航，把共享面板拆为 **基础 / 高级 / 降噪 NR / 快捷键** 四页：tab 条常驻内容区顶部（激活项主色药丸、悬浮高亮），点击切换并重置滚动；每页底部保留保存状态行，GitHub 链接保留在「基础」页。
+- **GitHub 芯片常驻标题栏**：标题栏语言芯片左侧新增「GitHub」芯片（悬浮反色），任意页面、控制台与游戏内面板均可一键打开项目主页；「基础」页底部的完整 URL 行保留。
+- **面板自由缩放**：控制台（`dlssnr_console.exe`）窗口边缘暴露原生八向缩放（无边框 `WM_NCHITTEST` 命中 + 最小 360×280），右下角绘制缩放握把；游戏内面板走共享面板的手动边缘缩放（右 / 下 / 右下角 8px 拖拽，直接读真实光标坐标计算增量，规避钩子坐标被钳制的问题）。
+- **版本化构建产物**：`build.bat` 全部产物输出到 `build\<版本号>\`（当前 `build\0.6.1\`），中间 `.obj` 归入 `build\obj\`；新增共享版本资源 `app_version.rc`（0.6.1 的 VERSIONINFO，dll / console / manager 三方链入，文件属性可见版本号）。
+
+### 变更 Changed
+
+- **控制台默认高度加长**：未保存过尺寸时默认高度由内容自适应（约 450px）提升为 640px（仍钳制在显示器工作区内），看起来不再局促。
+- **面板位置 / 尺寸持久化补全**：游戏内面板隐藏（`Ctrl+Alt+F11` 或 ×）与销毁时，位置（`PanelX / PanelY`）与尺寸（`PanelW / PanelH`）一并写回 `nvngx_dlssnr.ini`；独立控制台改为在 `WM_DESTROY` 统一保存——标题栏 × 与 Esc 关闭同样生效。重新打开一律恢复上次的位置和尺寸。
+- README-CN 的 INI 说明补充 `PanelX / PanelY / PanelW / PanelH` 键位。
+
+---
+
 ## [0.6.0] — 2026-09-08
 
 ### 新增 Added
@@ -18,6 +65,13 @@ All notable changes to **DLSS5-NR-Boost** are documented here.
   - **NVIDIA 官方 NR 参数**：默认透传调用方设置；`[DLSSNR_Settings]` `UseCustomSettings=1` 时可覆盖 Style（平衡/锐利/电影）、Intensity、LocalStructureStrength、LocalToneStrength、SkinStructureStrength、UseAutoMask；
   - **SEH 崩溃护盾**与遥测诊断字段（`dlssnr_shared.h` 扩展，同时保留本项目的 `enableUi` / `keyToggleUi` / `uiLanguage` 扩展字段；共享内存两侧已同步重编译）。
 - **管理器「面板调试」页新增对应控件**：各向异性开关 + 水平/垂直缩放滑条、深度感知 / 隔帧推理开关、NVIDIA NR 参数区（自定义透传开关、风格三段、强度 / 局部结构 / 局部色调 / 皮肤结构滑条、自动遮罩），缩放滑条上限提升至 200%。
+- **游戏内面板与独立控制台同步适配新特性**（`ui_panel.h` 共享面板，`nvngx_dlssnr.dll` overlay 与 `dlssnr_console.exe` 同步生效）：
+  - 新增「高级」分区：深度感知轮廓保持开关、隔帧推理（实验）开关、非均匀缩放（实验）开关 + 水平 / 垂直缩放滑条（25% ~ 200%）；
+  - 新增「NVIDIA 降噪」分区：自定义参数透传开关、风格三段选择（平衡 / 锐利 / 电影）、强度 / 局部结构 / 局部色调 / 皮肤结构滑条（皮肤结构 -1.00 显示为「自动」）、自动遮罩开关；
+  - 分辨率缩放滑条上限提升至 200%，快捷芯片新增 150% / 200% 档位；
+  - 全部新文案补齐中 / EN / RU / 한 四语言；
+  - `proxy_main.cpp` 三个 UI 桥接回调（pull / applyLive / commit）与 INI 持久化覆盖全部新键（`[DLSSNR_Proxy]` + `[DLSSNR_Settings]`），共享内存实时联动；
+  - `dlssnr_console.cpp` 的 INI 读写、钳制与共享内存同步覆盖全部新字段，缩放钳制上限提升至 200%。
 
 ---
 

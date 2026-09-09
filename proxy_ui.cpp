@@ -167,13 +167,12 @@ static void EndMouseCapture() {
     g_hookTarget = nullptr;
 }
 
+static void SavePanelPos(HWND hwnd);   // fwd: persists position + size
+
 // Hide + full teardown of an active capture session (close button, hotkey).
 static void HidePanel(HWND hwnd) {
     // Remember where the user dragged the panel (before it disappears).
-    if (g_hooks.savePos && IsWindowVisible(hwnd)) {
-        RECT wr; GetWindowRect(hwnd, &wr);
-        g_hooks.savePos(wr.left, wr.top, g_hooks.user);
-    }
+    if (IsWindowVisible(hwnd)) SavePanelPos(hwnd);   // position + size
     EndMouseCapture();
     g_panel.ResetInput(nullptr);   // no stale drag / hover into the next open
     ShowWindow(hwnd, SW_HIDE);
@@ -224,6 +223,12 @@ static void SavePanelPos(HWND hwnd) {
     if (!g_hooks.savePos) return;
     RECT wr; GetWindowRect(hwnd, &wr);
     g_hooks.savePos(wr.left, wr.top, g_hooks.user);
+    // Persist the free-resized client size alongside the position.
+    if (g_hooks.saveSize) {
+        RECT cr; GetClientRect(hwnd, &cr);
+        if (cr.right >= Panel::kMinW && cr.bottom >= Panel::kMinH)
+            g_hooks.saveSize(cr.right, cr.bottom, g_hooks.user);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -238,18 +243,35 @@ static LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             g_panel.ResetInput(hwnd);              // fresh input state each open
             g_panel.PullNow(g_hooks);              // refresh from live config
             g_panel.scroll = 0;
-            RECT cr; GetClientRect(hwnd, &cr);
-            g_panel.H = cr.bottom; g_panel.W = cr.right;
             g_panel.RebuildLayout();
-            int need = g_panel.contentH;
+            // Window size: the user's last free-resized size ([DLSSNR_Proxy]
+            // PanelW / PanelH) wins; otherwise auto-fit the current page.
+            int wantW = kClientW, wantH = g_panel.contentH;
+            int sw = 0, sh = 0;
+            if (g_hooks.loadSize && g_hooks.loadSize(sw, sh, g_hooks.user) &&
+                sw >= Panel::kMinW && sh >= Panel::kMinH) {
+                wantW = sw; wantH = sh;
+            }
+            // Never exceed the nearest monitor's work area.
+            RECT wa{ 0, 0, 0, 0 };
+            MONITORINFO mi{ sizeof(mi) };
+            HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (mon && GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
+            else SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+            if (wantW > wa.right - wa.left - 28) wantW = wa.right - wa.left - 28;
+            if (wantH > wa.bottom - wa.top - 28) wantH = wa.bottom - wa.top - 28;
+            if (wantW < Panel::kMinW) wantW = Panel::kMinW;
+            if (wantH < Panel::kMinH) wantH = Panel::kMinH;
             int curW = 0, curH = 0;
             RECT wr; GetWindowRect(hwnd, &wr);
             curW = wr.right - wr.left; curH = wr.bottom - wr.top;
-            if (curW != kClientW || curH != need) {
-                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, kClientW, need,
+            if (curW != wantW || curH != wantH) {
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, wantW, wantH,
                              SWP_NOMOVE | SWP_NOACTIVATE);
             }
-            PlacePanel(hwnd, kClientW, need);
+            g_panel.W = wantW; g_panel.H = wantH;
+            g_panel.RebuildLayout();
+            PlacePanel(hwnd, wantW, wantH);
             SetTimer(hwnd, Panel::kTimer, 50, nullptr);
             // SW_SHOWNOACTIVATE keeps keyboard focus with the game; the
             // low-level mouse hook drives the panel's own virtual cursor.

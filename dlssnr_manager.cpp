@@ -250,7 +250,8 @@ struct MS {
                   *tCtrlAlt, *lblMatched, *lblBilinear, *dbgSaved,
                   *tAnamorphic, *tScaleX, *tScaleY, *tDepthAware, *tVrnr,
                   *tNRSet, *tCustomNR, *styleBal, *styleSharp, *styleCine,
-                  *lblIntensity, *lblLocalStruct, *lblLocalTone, *lblSkin, *tAutoMask;
+                  *lblIntensity, *lblLocalStruct, *lblLocalTone, *lblSkin, *tAutoMask,
+      *tVBlend, *tVSched, *vEvery1, *vEvery2, *vEvery3;
     const wchar_t* cntFmt;
 };
 static const MS kM[LANG_COUNT] = {
@@ -281,6 +282,7 @@ static const MS kM[LANG_COUNT] = {
       L"各向异性缩放（实验）", L"水平缩放", L"垂直缩放", L"深度感知轮廓", L"隔帧推理 · 实验",
       L"NVIDIA NR 参数", L"自定义 NR 参数（覆盖调用方）", L"平衡", L"锐利", L"电影",
       L"强度", L"局部结构", L"局部色调", L"皮肤结构", L"自动遮罩",
+      L"跳帧混合", L"动态跳帧", L"每帧推理", L"每2帧", L"每3帧",
       L"发现 %d 个目标 · 已勾选 %d 项" },
     { L"In-game panel proxy · Install / Uninstall",
       L"Proxy package (auto-detected next to this manager)",
@@ -309,6 +311,7 @@ static const MS kM[LANG_COUNT] = {
       L"Anamorphic scaling (experimental)", L"Horizontal scale", L"Vertical scale", L"Depth-aware resolve", L"Alternating frames · exp",
       L"NVIDIA NR settings", L"Custom NR params (override caller)", L"Balanced", L"Sharp", L"Cinematic",
       L"Intensity", L"Local structure", L"Local tone", L"Skin structure", L"Auto mask",
+      L"Skip-frame blend", L"Adaptive skip", L"Every frame", L"Every 2nd", L"Every 3rd",
       L"%d targets found · %d ticked" },
     { L"Прокси внутриигровой панели · Установка / удаление",
       L"Пакет прокси (определяется автоматически рядом с менеджером)",
@@ -337,6 +340,7 @@ static const MS kM[LANG_COUNT] = {
       L"Анизотропный масштаб (эксп.)", L"Гориз. масштаб", L"Верт. масштаб", L"Учёт глубины", L"Черезкадрово · эксп.",
       L"Параметры NVIDIA NR", L"Свои параметры NR (замещают вызывавшего)", L"Баланс", L"Резкость", L"Кино",
       L"Интенсивность", L"Лок. структура", L"Лок. тон", L"Структура кожи", L"Автомаска",
+      L"Смешивание пропусков", L"Адаптивный пропуск", L"Каждый кадр", L"Через 2", L"Через 3",
       L"Найдено %d · отмечено %d" },
     { L"게임 내 패널 프록시 · 설치 / 제거",
       L"프록시 패키지 (이 관리자와 같은 폴더면 자동 인식)",
@@ -365,6 +369,7 @@ static const MS kM[LANG_COUNT] = {
       L"아니소트로픽 배율 (실험)", L"가로 배율", L"세로 배율", L"깊이 인식", L"교대 프레임 · 실험",
       L"NVIDIA NR 설정", L"NR 파라미터 사용 (호출부 대체)", L"밸런스", L"샤프", L"시네마틱",
       L"강도", L"로컬 구조", L"로컬 톤", L"피부 구조", L"자동 마스크",
+      L"스킵 프레임 블렌딩", L"적응형 스킵", L"매 프레임", L"2프레임", L"3프레임",
       L"%d개 발견 · %d개 선택" },
 };
 
@@ -1078,7 +1083,9 @@ struct DebugCfg {
     bool enableAnamorphic = false;
     float scaleX = 0.65f, scaleY = 0.85f;
     bool enableDepthAware = true;
-    bool enableVrnr = false;
+    int  vrnrInterval = 1;              // run NR every Nth frame (1 = every frame / off)
+    bool vrnrBlend = true;              // Plan A: motion-adaptive blend on skipped frames
+    bool vrnrSched = false;             // Plan D: adaptive scheduling while moving
     bool useCustomNR = false;
     unsigned nrStyle = 0;   // 0 Balanced / 1 Sharp / 2 Cinematic
     float nrIntensity = 1.0f, nrLocalStructure = 1.0f, nrLocalTone = 1.0f, nrSkin = -1.0f;
@@ -1108,6 +1115,7 @@ static void ClampPanel() {
     if (s_pcfg.nrSkin < -1.0f) s_pcfg.nrSkin = -1.0f;
     if (s_pcfg.nrSkin > 2.0f) s_pcfg.nrSkin = 2.0f;
     if (s_pcfg.nrStyle > 2) s_pcfg.nrStyle = 0;
+    if (s_pcfg.vrnrInterval < 1 || s_pcfg.vrnrInterval > 3) s_pcfg.vrnrInterval = 1;
     if (s_pcfg.transfer < 0.0f) s_pcfg.transfer = 0.0f;
     if (s_pcfg.transfer > 2.0f) s_pcfg.transfer = 2.0f;
     if (s_pcfg.color < 0.0f) s_pcfg.color = 0.0f;
@@ -1142,7 +1150,14 @@ static void LoadPanelIni() {
     GetPrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleY", L"0.85", buf, 64, s_pini);
     s_pcfg.scaleY = (float)_wtof(buf);
     s_pcfg.enableDepthAware = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, s_pini) != 0;
-    s_pcfg.enableVrnr       = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_pini) != 0;
+    {
+        int enableAlt = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_pini) != 0;
+        int vi = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrInterval", 0, s_pini);
+        if (vi < 1 || vi > 3) vi = enableAlt ? 2 : 1;   // legacy INIs carry only the on/off flag
+        s_pcfg.vrnrInterval = vi;
+    }
+    s_pcfg.vrnrBlend = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrBlend", 1, s_pini) != 0;
+    s_pcfg.vrnrSched = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", 0, s_pini) != 0;
     s_pcfg.useCustomNR      = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseCustomSettings", 0, s_pini) != 0;
     s_pcfg.nrStyle          = (unsigned)GetPrivateProfileIntW(L"DLSSNR_Settings", L"Style", 0, s_pini);
     GetPrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", L"1.00", buf, 64, s_pini);
@@ -1177,7 +1192,10 @@ static void SavePanelIni() {
     swprintf_s(buf, L"%.2f", s_pcfg.scaleX); WritePrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleX", buf, s_pini);
     swprintf_s(buf, L"%.2f", s_pcfg.scaleY); WritePrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleY", buf, s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", s_pcfg.enableDepthAware ? L"1" : L"0", s_pini);
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", s_pcfg.enableVrnr ? L"1" : L"0", s_pini);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", (s_pcfg.vrnrInterval > 1) ? L"1" : L"0", s_pini);
+    swprintf_s(buf, L"%d", s_pcfg.vrnrInterval); WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrInterval", buf, s_pini);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrBlend", s_pcfg.vrnrBlend ? L"1" : L"0", s_pini);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", s_pcfg.vrnrSched ? L"1" : L"0", s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Settings", L"UseCustomSettings", s_pcfg.useCustomNR ? L"1" : L"0", s_pini);
     swprintf_s(buf, L"%u", s_pcfg.nrStyle); WritePrivateProfileStringW(L"DLSSNR_Settings", L"Style", buf, s_pini);
     swprintf_s(buf, L"%.2f", s_pcfg.nrIntensity); WritePrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", buf, s_pini);
@@ -1204,11 +1222,11 @@ static void ReopenDebugIni(HWND h) {
 }
 
 // --- row model -------------------------------------------------------------
-enum DbgKind { DBG_TOGGLE, DBG_SEG, DBG_SEG3, DBG_SLIDER, DBG_SECTION, DBG_KEY };
+enum DbgKind { DBG_TOGGLE, DBG_SEG, DBG_SEG3, DBG_VSEG, DBG_SLIDER, DBG_SECTION, DBG_KEY };
 enum DbgField {
     D_PROXY = 0, D_HOTKEYS, D_UI, D_CTRLALT, D_MODE,
     D_SCALE, D_TRANSFER, D_COLOR, D_SHARP,
-    D_ANAM, D_SX, D_SY, D_DEPTH, D_VRNR,
+    D_ANAM, D_SX, D_SY, D_DEPTH, D_VRNR, D_VBLEND, D_VSCHED,
     D_CUSTOMNR, D_STYLE, D_INTENSITY, D_LSTRUCT, D_LTONE, D_SKIN, D_AUTOMASK,
     K_PROXY, K_MODE, K_UP, K_DOWN, K_UI,
 };
@@ -1220,7 +1238,8 @@ static const DbgRow kDbgRows[] = {
     { DBG_SLIDER,  D_COLOR }, { DBG_SLIDER, D_SHARP },
     { DBG_TOGGLE,  D_ANAM },
     { DBG_SLIDER,  D_SX }, { DBG_SLIDER, D_SY },
-    { DBG_TOGGLE,  D_DEPTH }, { DBG_TOGGLE, D_VRNR },
+    { DBG_TOGGLE,  D_DEPTH }, { DBG_VSEG, D_VRNR },
+    { DBG_TOGGLE,  D_VBLEND }, { DBG_TOGGLE, D_VSCHED },
     { DBG_SECTION, 1 },
     { DBG_TOGGLE,  D_CUSTOMNR },
     { DBG_SEG3,    D_STYLE },
@@ -1239,6 +1258,7 @@ static int DbgRowH(int i) {
     case DBG_TOGGLE:  return 44;
     case DBG_SEG:     return 52;
     case DBG_SEG3:    return 52;
+    case DBG_VSEG:    return 52;
     case DBG_SLIDER:  return 56;
     case DBG_SECTION: return 34;
     case DBG_KEY:     return 40;
@@ -1281,7 +1301,8 @@ static bool DbgGetB(int f) {
     case D_CTRLALT: return s_pcfg.requireCtrlAlt;
     case D_ANAM:    return s_pcfg.enableAnamorphic;
     case D_DEPTH:   return s_pcfg.enableDepthAware;
-    case D_VRNR:    return s_pcfg.enableVrnr;
+    case D_VBLEND:  return s_pcfg.vrnrBlend;
+    case D_VSCHED:  return s_pcfg.vrnrSched;
     case D_CUSTOMNR:return s_pcfg.useCustomNR;
     case D_AUTOMASK:return s_pcfg.nrAutoMask;
     }
@@ -1295,7 +1316,8 @@ static void DbgSetB(int f, bool v) {
     case D_CTRLALT: s_pcfg.requireCtrlAlt = v; break;
     case D_ANAM:    s_pcfg.enableAnamorphic = v; break;
     case D_DEPTH:   s_pcfg.enableDepthAware = v; break;
-    case D_VRNR:    s_pcfg.enableVrnr = v; break;
+    case D_VBLEND:  s_pcfg.vrnrBlend = v; break;
+    case D_VSCHED:  s_pcfg.vrnrSched = v; break;
     case D_CUSTOMNR:s_pcfg.useCustomNR = v; break;
     case D_AUTOMASK:s_pcfg.nrAutoMask = v; break;
     }
@@ -1377,6 +1399,8 @@ static void DbgLabel(int f, wchar_t* out, size_t cch) {
     case D_SY:      t = m.tScaleY; break;
     case D_DEPTH:   t = m.tDepthAware; break;
     case D_VRNR:    t = m.tVrnr; break;
+    case D_VBLEND:  t = m.tVBlend; break;
+    case D_VSCHED:  t = m.tVSched; break;
     case D_CUSTOMNR:t = m.tCustomNR; break;
     case D_INTENSITY:t = m.lblIntensity; break;
     case D_LSTRUCT: t = m.lblLocalStruct; break;
@@ -1423,9 +1447,14 @@ static std::wstring BtnLabel(int id) {
     return L"";
 }
 static bool BtnOnCard(int id) {
+    // Corner-erase colour must match the surface actually behind the button.
+    // Page 1's footer row (incl. A_UNINSTALL) sits INSIDE the full-height
+    // card; the page-2 log bar (A_POPOUT / A_CLEAR) sits on the window
+    // background between the two cards.
+    if (id == A_UNINSTALL) return g_page == 1;
+    if (id == A_POPOUT || id == A_CLEAR) return false;
     return id == A_SRC_BROWSE || id == A_ROOT_BROWSE || id == A_SCAN ||
-           id == A_ALL || id == A_SELNONE || id == A_REFRESH ||
-           id == A_POPOUT || id == A_CLEAR;
+           id == A_ALL || id == A_SELNONE || id == A_REFRESH;
 }
 static void PaintButton(HDC dc, const Btn& b) {
     bool hot = (g_hotAction == b.id);
@@ -1727,7 +1756,7 @@ static void DrawAll(HDC dc, int W, int H) {
     SetTextColor(dc, s.primary);
     int hx = g_L.rail.right + 14;
     RECT tr{ hx, g_L.rail.top, W - 240, g_L.rail.bottom };
-    DrawTextW(dc, L"DLSS5-NR-Boost manager", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(dc, L"DLSS5NR-CostScaler-Manager", -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     SelectObject(dc, g_font);
     SetTextColor(dc, s.sub);
     RECT sr{ 32, g_L.rail.bottom + 4, W - 240, g_L.rail.bottom + 28 };
@@ -1931,6 +1960,28 @@ static void DrawAll(HDC dc, int W, int H) {
                         SetTextColor(dc, act ? k.onPrimary : k.onVar);
                         RECT s3r{ qx, sy, qx + bw, sy + sh3 };
                         DrawTextW(dc, names[q], -1, &s3r,
+                                  DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                    }
+                } else if (row.kind == DBG_VSEG) {
+                    // VRNR interval: [每帧推理] [每2帧] [每3帧] (values 1..3)
+                    SelectObject(dc, g_font);
+                    SetTextColor(dc, k.onVar);
+                    RECT lr7{ rl, y + 2, rr, y + 20 };
+                    DrawTextW(dc, lb, -1, &lr7, DT_LEFT | DT_SINGLELINE);
+                    int sy = y + 24, sh3 = 26, gap3 = 6;
+                    int bw = (rr - rl - gap3 * 2) / 3;
+                    const wchar_t* vnames[3] = { m.vEvery1, m.vEvery2, m.vEvery3 };
+                    for (int q = 0; q < 3; ++q) {
+                        int qx = rl + q * (bw + gap3);
+                        bool act = (s_pcfg.vrnrInterval == q + 1);
+                        GpRoundFill(dc, qx, sy, bw, sh3, sh3 / 2,
+                                    act ? k.primary : k.surfHigh);
+                        if (!act)
+                            GpRoundFrame(dc, qx, sy, bw - 1, sh3 - 1, sh3 / 2, k.outlineVar);
+                        SelectObject(dc, g_fontSmall);
+                        SetTextColor(dc, act ? k.onPrimary : k.onVar);
+                        RECT s4r{ qx, sy, qx + bw, sy + sh3 };
+                        DrawTextW(dc, vnames[q], -1, &s4r,
                                   DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
                     }
                 } else if (row.kind == DBG_SLIDER) {
@@ -2410,6 +2461,16 @@ static LRESULT CALLBACK MainWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
                 MarkPdirty();
                 break;
             }
+            case DBG_VSEG: {
+                int rl3 = da.left + 14, rr3 = da.right - 14;
+                int q = (pt.x - rl3) * 3 / (rr3 - rl3);
+                if (q < 0) q = 0;
+                if (q > 2) q = 2;
+                s_pcfg.vrnrInterval = q + 1;
+                ClampPanel();
+                MarkPdirty();
+                break;
+            }
             case DBG_SLIDER: {
                 int rl = da.left + 14, rr = da.right - 14;
                 float t = (float)(pt.x - rl) / (float)(rr - rl);
@@ -2570,7 +2631,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int nCmdShow) {
     RECT rc{ 0, 0, 700, 740 };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     g_hwnd = CreateWindowExW(0, wc.lpszClassName,
-                             L"DLSS5-NR-Boost manager",
+                             L"DLSS5NR-CostScaler-Manager",
                              WS_OVERLAPPEDWINDOW,
                              CW_USEDEFAULT, CW_USEDEFAULT,
                              rc.right - rc.left, rc.bottom - rc.top,

@@ -15,6 +15,7 @@
 
 #include "Downsample_Shader.h"
 #include "Resolve_Shader.h"
+#include "Motion_Shader.h"
 #include "dlssnr_shared.h"
 #include "ui_panel.h"
 #include "proxy_ui.h"
@@ -80,6 +81,9 @@ static std::atomic<bool>     g_enableUi(true);       // allow Ctrl+Alt+F11 overl
 static std::atomic<int>      g_keyToggleUI(VK_F11);  // base key of the overlay toggle combo
 static std::atomic<int>      g_uiLanguage((int)dlssnr_ui::L_ZH);  // UI display language (zh/en/ru/ko)
 static std::atomic<bool>     g_enableVrnr(false);
+static std::atomic<int>      g_vrnrInterval(1);    // run NR every Nth frame (1 = every frame / off)
+static std::atomic<bool>     g_vrnrBlend(true);    // Plan A: motion-adaptive blend on skipped frames
+static std::atomic<bool>     g_vrnrSched(false);   // Plan D: adaptive scheduling while moving
 static std::atomic<bool>     g_enableDepthAware(true);
 static std::atomic<uint32_t> g_nrStyle(0);
 static std::atomic<float>    g_nrIntensity(1.00f);
@@ -223,6 +227,14 @@ static void LoadConfig() {
     g_enableVrnr.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, g_iniPath) != 0);
     g_enableDepthAware.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, g_iniPath) != 0);
 
+    // VRNR interval (1 = every frame / off, 2, 3). Legacy INIs only carry
+    // EnableAlternatingFrames — derive the interval from it in that case.
+    int vrnrInterval = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrInterval", 0, g_iniPath);
+    if (vrnrInterval < 1 || vrnrInterval > 3) vrnrInterval = g_enableVrnr.load() ? 2 : 1;
+    g_vrnrInterval.store(vrnrInterval);
+    g_vrnrBlend.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrBlend", 1, g_iniPath) != 0);
+    g_vrnrSched.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", 0, g_iniPath) != 0);
+
     g_nrStyle.store((uint32_t)GetPrivateProfileIntW(L"DLSSNR_Settings", L"Style", 0, g_iniPath));
     wchar_t nrBuf[64] = { 0 };
     GetPrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", L"1.00", nrBuf, 64, g_iniPath);
@@ -280,8 +292,11 @@ static void PushProxyToSharedMemory() {
     g_proxySharedConfig->keyScaleUp = g_keyScaleUp;
     g_proxySharedConfig->keyScaleDown = g_keyScaleDown;
 
-    g_proxySharedConfig->enableVrnr = g_enableVrnr.load() ? 1 : 0;
+    g_proxySharedConfig->enableVrnr = (g_vrnrInterval.load() > 1) ? 1 : 0;
     g_proxySharedConfig->enableDepthAware = g_enableDepthAware.load() ? 1 : 0;
+    g_proxySharedConfig->vrnrInterval = (uint32_t)g_vrnrInterval.load();
+    g_proxySharedConfig->vrnrBlend = g_vrnrBlend.load() ? 1 : 0;
+    g_proxySharedConfig->vrnrSched = g_vrnrSched.load() ? 1 : 0;
     g_proxySharedConfig->nrStyle = g_nrStyle.load();
     g_proxySharedConfig->nrIntensity = g_nrIntensity.load();
     g_proxySharedConfig->nrLocalStructureStrength = g_nrLocalStructureStrength.load();
@@ -315,6 +330,20 @@ static void UiPullConfig(dlssnr_ui::UiValues& out, void*) {
     out.keyScaleDown   = g_keyScaleDown.load();
     out.keyToggleUi    = g_keyToggleUI.load();
     out.uiLanguage     = g_uiLanguage.load();
+    out.depthAware     = g_enableDepthAware.load();
+    out.vrnrInterval   = g_vrnrInterval.load();
+    out.vrnrBlend      = g_vrnrBlend.load();
+    out.vrnrSched      = g_vrnrSched.load();
+    out.anamorphic     = g_enableAnamorphic.load();
+    out.scaleX         = g_scaleX.load();
+    out.scaleY         = g_scaleY.load();
+    out.useCustomNR    = g_useCustomNR.load();
+    out.nrStyle        = (int)g_nrStyle.load();
+    out.nrIntensity    = g_nrIntensity.load();
+    out.nrLocalStruct  = g_nrLocalStructureStrength.load();
+    out.nrLocalTone    = g_nrLocalToneStrength.load();
+    out.nrSkinStruct   = g_nrSkinStructureStrength.load();
+    out.nrAutoMask     = g_nrUseAutoMask.load() != 0;
     dlssnr_ui::SetLang(out.uiLanguage);  // mirror into the global display lang
 }
 
@@ -334,6 +363,20 @@ static void UiApplyLive(const dlssnr_ui::UiValues& v, int field, void*) {
     case dlssnr_ui::F_KEY_SCALEUP:      g_keyScaleUp.store(v.keyScaleUp); break;
     case dlssnr_ui::F_KEY_SCALEDOWN:    g_keyScaleDown.store(v.keyScaleDown); break;
     case dlssnr_ui::F_KEY_TOGGLEUI:     g_keyToggleUI.store(v.keyToggleUi); break;
+    case dlssnr_ui::F_DEPTH_AWARE:      g_enableDepthAware.store(v.depthAware); break;
+    case dlssnr_ui::F_VRNR:             g_vrnrInterval.store(v.vrnrInterval); g_enableVrnr.store(v.vrnrInterval > 1); break;
+    case dlssnr_ui::F_VRNR_BLEND:       g_vrnrBlend.store(v.vrnrBlend); break;
+    case dlssnr_ui::F_VRNR_SCHED:       g_vrnrSched.store(v.vrnrSched); break;
+    case dlssnr_ui::F_ANAMORPHIC:       g_enableAnamorphic.store(v.anamorphic); break;
+    case dlssnr_ui::F_SCALE_X:          g_scaleX.store(v.scaleX); break;
+    case dlssnr_ui::F_SCALE_Y:          g_scaleY.store(v.scaleY); break;
+    case dlssnr_ui::F_USE_CUSTOM_NR:    g_useCustomNR.store(v.useCustomNR); break;
+    case dlssnr_ui::F_NR_STYLE:         g_nrStyle.store((uint32_t)v.nrStyle); break;
+    case dlssnr_ui::F_NR_INTENSITY:     g_nrIntensity.store(v.nrIntensity); break;
+    case dlssnr_ui::F_NR_LOCAL_STRUCT:  g_nrLocalStructureStrength.store(v.nrLocalStruct); break;
+    case dlssnr_ui::F_NR_LOCAL_TONE:    g_nrLocalToneStrength.store(v.nrLocalTone); break;
+    case dlssnr_ui::F_NR_SKIN_STRUCT:   g_nrSkinStructureStrength.store(v.nrSkinStruct); break;
+    case dlssnr_ui::F_NR_AUTO_MASK:     g_nrUseAutoMask.store(v.nrAutoMask ? 1u : 0u); break;
     default: break;
     }
 }
@@ -357,6 +400,21 @@ static void UiCommitConfig(const dlssnr_ui::UiValues& v, void*) {
     g_keyToggleUI.store(v.keyToggleUi);
     g_uiLanguage.store(v.uiLanguage);
     dlssnr_ui::SetLang(v.uiLanguage);
+    g_enableDepthAware.store(v.depthAware);
+    g_vrnrInterval.store(v.vrnrInterval);
+    g_enableVrnr.store(v.vrnrInterval > 1);
+    g_vrnrBlend.store(v.vrnrBlend);
+    g_vrnrSched.store(v.vrnrSched);
+    g_enableAnamorphic.store(v.anamorphic);
+    g_scaleX.store(v.scaleX);
+    g_scaleY.store(v.scaleY);
+    g_useCustomNR.store(v.useCustomNR);
+    g_nrStyle.store((uint32_t)v.nrStyle);
+    g_nrIntensity.store(v.nrIntensity);
+    g_nrLocalStructureStrength.store(v.nrLocalStruct);
+    g_nrLocalToneStrength.store(v.nrLocalTone);
+    g_nrSkinStructureStrength.store(v.nrSkinStruct);
+    g_nrUseAutoMask.store(v.nrAutoMask ? 1u : 0u);
 
     // Persist to the INI (sections match LoadConfig) then push to shared memory.
     wchar_t buf[32];
@@ -375,6 +433,21 @@ static void UiCommitConfig(const dlssnr_ui::UiValues& v, void*) {
     swprintf_s(buf, L"%d", v.keyScaleUp);     SaveConfigValueEx(L"Hotkeys", L"KeyScaleUp", buf);
     swprintf_s(buf, L"%d", v.keyScaleDown);   SaveConfigValueEx(L"Hotkeys", L"KeyScaleDown", buf);
     swprintf_s(buf, L"%d", v.keyToggleUi);    SaveConfigValueEx(L"Hotkeys", L"KeyToggleUI", buf);
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", v.depthAware ? L"1" : L"0");
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableAlternatingFrames", (v.vrnrInterval > 1) ? L"1" : L"0");
+    swprintf_s(buf, L"%u", (uint32_t)v.vrnrInterval); SaveConfigValueEx(L"DLSSNR_Proxy", L"VrnrInterval", buf);
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"VrnrBlend", v.vrnrBlend ? L"1" : L"0");
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", v.vrnrSched ? L"1" : L"0");
+    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableAnamorphic", v.anamorphic ? L"1" : L"0");
+    swprintf_s(buf, L"%.2f", v.scaleX);           SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScaleX", buf);
+    swprintf_s(buf, L"%.2f", v.scaleY);           SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScaleY", buf);
+    SaveConfigValueEx(L"DLSSNR_Settings", L"UseCustomSettings", v.useCustomNR ? L"1" : L"0");
+    swprintf_s(buf, L"%u", (uint32_t)v.nrStyle);  SaveConfigValueEx(L"DLSSNR_Settings", L"Style", buf);
+    swprintf_s(buf, L"%.2f", v.nrIntensity);      SaveConfigValueEx(L"DLSSNR_Settings", L"Intensity", buf);
+    swprintf_s(buf, L"%.2f", v.nrLocalStruct);    SaveConfigValueEx(L"DLSSNR_Settings", L"LocalStructureStrength", buf);
+    swprintf_s(buf, L"%.2f", v.nrLocalTone);      SaveConfigValueEx(L"DLSSNR_Settings", L"LocalToneStrength", buf);
+    swprintf_s(buf, L"%.2f", v.nrSkinStruct);     SaveConfigValueEx(L"DLSSNR_Settings", L"SkinStructureStrength", buf);
+    swprintf_s(buf, L"%u", v.nrAutoMask ? 1u : 0u); SaveConfigValueEx(L"DLSSNR_Settings", L"UseAutoMask", buf);
     PushProxyToSharedMemory();
     Log("[Proxy] Overlay UI committed settings to INI + shared memory");
 }
@@ -400,6 +473,24 @@ static void UiSavePanelPos(int x, int y, void*) {
     swprintf_s(b, L"%d", y);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelY", b, g_iniPath);
 }
+// Panel size persistence for the free-resize window ([DLSSNR_Proxy]
+// PanelW / PanelH, client pixels). No value saved yet -> load returns false.
+static bool UiLoadPanelSize(int& w, int& h, void*) {
+    if (g_iniPath[0] == L'\0') return false;
+    int pw = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelW", -1, g_iniPath);
+    int ph = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelH", -1, g_iniPath);
+    if (pw <= 0 || ph <= 0) return false;
+    w = pw; h = ph;
+    return true;
+}
+static void UiSavePanelSize(int w, int h, void*) {
+    if (g_iniPath[0] == L'\0') return;
+    wchar_t b[24];
+    swprintf_s(b, L"%d", w);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelW", b, g_iniPath);
+    swprintf_s(b, L"%d", h);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelH", b, g_iniPath);
+}
 
 static void EnsureUiHooksRegistered() {
     if (g_uiHooksRegistered) return;
@@ -409,6 +500,8 @@ static void EnsureUiHooksRegistered() {
     g_uiHooks.commit = UiCommitConfig;
     g_uiHooks.loadPos = UiLoadPanelPos;
     g_uiHooks.savePos = UiSavePanelPos;
+    g_uiHooks.loadSize = UiLoadPanelSize;
+    g_uiHooks.saveSize = UiSavePanelSize;
     dlssnr_proxyui::OverlaySetHooks(g_uiHooks);
     g_uiHooksRegistered = true;
 }
@@ -450,6 +543,14 @@ static void CheckConfigHotReload() {
 
                 g_enableVrnr.store(g_proxySharedConfig->enableVrnr != 0);
                 g_enableDepthAware.store(g_proxySharedConfig->enableDepthAware != 0);
+                {
+                    int vi = (int)g_proxySharedConfig->vrnrInterval;
+                    if (vi < 1 || vi > 3) vi = g_proxySharedConfig->enableVrnr ? 2 : 1;
+                    g_vrnrInterval.store(vi);
+                    g_enableVrnr.store(vi > 1);
+                }
+                g_vrnrBlend.store(g_proxySharedConfig->vrnrBlend != 0);
+                g_vrnrSched.store(g_proxySharedConfig->vrnrSched != 0);
                 g_nrStyle.store(g_proxySharedConfig->nrStyle);
                 g_nrIntensity.store(g_proxySharedConfig->nrIntensity);
                 g_nrLocalStructureStrength.store(g_proxySharedConfig->nrLocalStructureStrength);
@@ -719,14 +820,40 @@ struct ResolveConstants {
     float    colorStrength;
     uint32_t isSkipFrame;
     uint32_t hasDepth;
+    float    mvScaleX;      // native-res motion-vector scale (game-provided)
+    float    mvScaleY;
+    float    vrnrBlend;     // Plan A strength (0 = off)
+    uint32_t hasMv;
+    uint32_t reserved;
+};
+
+struct MotionConstants {
+    float    mvScaleX;
+    float    mvScaleY;
+    uint32_t mvWidth;
+    uint32_t mvHeight;
+    uint32_t hasMv;
 };
 
 static ID3D12Device*             g_device = nullptr;
 static ID3D12RootSignature*      g_rootSigDownsample = nullptr;
 static ID3D12RootSignature*      g_rootSigResolve = nullptr;
+static ID3D12RootSignature*      g_rootSigMotion = nullptr;
 static ID3D12PipelineState*      g_psoDownsample = nullptr;
 static ID3D12PipelineState*      g_psoResolve = nullptr;
+static ID3D12PipelineState*      g_psoMotion = nullptr;
 static ID3D12DescriptorHeap*     g_descHeap = nullptr;
+
+// Motion-metric infrastructure (Plan D): a 1x1 R32_UINT accumulator is zeroed
+// from a zero buffer, CS_Motion atomically adds per-tile averages, and a small
+// ring of READBACK buffers is copied each frame for lagged CPU readback.
+static ID3D12Resource*           g_motionBuf = nullptr;   // 1x1 R32_UINT, DEFAULT, UAV
+static ID3D12Resource*           g_motionZero = nullptr;  // 1x1 R32_UINT, DEFAULT, zeroed
+static ID3D12Resource*           g_motionStaging[4] = {}; // 1x1 R32_UINT, READBACK ring
+static uint32_t                  g_motionIdx = 0;         // frames with a completed copy
+static uint32_t                  g_motionTileCount = 0;
+static D3D12_RESOURCE_STATES     g_motionBufState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+static float                     g_lastMotion = 0.0f;     // avg |mv| (native px), lagged 2 frames
 
 // Multi-Slot Feature Cache to support concurrent viewports and hooks (e.g. MSFS 2024 Upscaled + Present)
 struct FeatureSlot {
@@ -745,9 +872,11 @@ struct FeatureSlot {
 
     ID3D12Resource*     colorSmall = nullptr;
     ID3D12Resource*     outputSmall = nullptr;
+    ID3D12Resource*     inputSnapshot = nullptr;   // input the NR last saw (for skip-frame blending)
     ID3D12Resource*     nativeScratch = nullptr;
     D3D12_RESOURCE_STATES colorSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     D3D12_RESOURCE_STATES outputSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    D3D12_RESOURCE_STATES inputSnapshotState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     D3D12_RESOURCE_STATES nativeScratchState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
     ULONGLONG           lastUsedTick = 0;
@@ -789,8 +918,13 @@ static void ReleaseSlotScratch(FeatureSlot& slot) {
         NrRetired r; r.resource = slot.outputSmall; r.framesLeft = RETIRE_FRAME_DELAY; g_retiredList.push_back(r);
         slot.outputSmall = nullptr;
     }
+    if (slot.inputSnapshot) {
+        NrRetired r; r.resource = slot.inputSnapshot; r.framesLeft = RETIRE_FRAME_DELAY; g_retiredList.push_back(r);
+        slot.inputSnapshot = nullptr;
+    }
     slot.colorSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     slot.outputSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    slot.inputSnapshotState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 }
 
 static void ReleaseSlotResources(FeatureSlot& slot) {
@@ -838,9 +972,20 @@ static void TransitionBarrier(ID3D12GraphicsCommandList* cmd, ID3D12Resource* re
 static void ReleaseD3D12Pipeline() {
     if (g_psoDownsample) { g_psoDownsample->Release(); g_psoDownsample = nullptr; }
     if (g_psoResolve) { g_psoResolve->Release(); g_psoResolve = nullptr; }
+    if (g_psoMotion) { g_psoMotion->Release(); g_psoMotion = nullptr; }
     if (g_rootSigDownsample) { g_rootSigDownsample->Release(); g_rootSigDownsample = nullptr; }
     if (g_rootSigResolve) { g_rootSigResolve->Release(); g_rootSigResolve = nullptr; }
+    if (g_rootSigMotion) { g_rootSigMotion->Release(); g_rootSigMotion = nullptr; }
     if (g_descHeap) { g_descHeap->Release(); g_descHeap = nullptr; }
+    if (g_motionBuf) { g_motionBuf->Release(); g_motionBuf = nullptr; }
+    if (g_motionZero) { g_motionZero->Release(); g_motionZero = nullptr; }
+    for (int i = 0; i < 4; ++i) {
+        if (g_motionStaging[i]) { g_motionStaging[i]->Release(); g_motionStaging[i] = nullptr; }
+    }
+    g_motionBufState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    g_motionIdx = 0;
+    g_motionTileCount = 0;
+    g_lastMotion = 0.0f;
     g_device = nullptr;
 }
 
@@ -921,7 +1066,7 @@ static bool InitD3D12Pipeline(ID3D12Device* device) {
     {
         D3D12_DESCRIPTOR_RANGE resolveRanges[2] = {};
         resolveRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        resolveRanges[0].NumDescriptors = 4; // t0: colorSmall, t1: outputSmall, t2: nativeColor, t3: depth
+        resolveRanges[0].NumDescriptors = 6; // t0: colorSmall, t1: outputSmall, t2: nativeColor, t3: depth, t4: lastInput, t5: motion vectors
         resolveRanges[0].BaseShaderRegister = 0;
         resolveRanges[0].RegisterSpace = 0;
         resolveRanges[0].OffsetInDescriptorsFromTableStart = 0;
@@ -930,13 +1075,13 @@ static bool InitD3D12Pipeline(ID3D12Device* device) {
         resolveRanges[1].NumDescriptors = 1;
         resolveRanges[1].BaseShaderRegister = 0;
         resolveRanges[1].RegisterSpace = 0;
-        resolveRanges[1].OffsetInDescriptorsFromTableStart = 4;
+        resolveRanges[1].OffsetInDescriptorsFromTableStart = 6;
 
         D3D12_ROOT_PARAMETER resolveParams[2] = {};
         resolveParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         resolveParams[0].Constants.ShaderRegister = 0;
         resolveParams[0].Constants.RegisterSpace = 0;
-        resolveParams[0].Constants.Num32BitValues = 10;
+        resolveParams[0].Constants.Num32BitValues = 15;
         resolveParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
         resolveParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -997,8 +1142,94 @@ static bool InitD3D12Pipeline(ID3D12Device* device) {
         return false;
     }
 
+    // --- motion-reduce pass (Plan D signal) ---
+    {
+        D3D12_DESCRIPTOR_RANGE motionRanges[2] = {};
+        motionRanges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        motionRanges[0].NumDescriptors = 1;   // t0: motion vectors
+        motionRanges[0].BaseShaderRegister = 0;
+        motionRanges[0].RegisterSpace = 0;
+        motionRanges[0].OffsetInDescriptorsFromTableStart = 0;
+
+        motionRanges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        motionRanges[1].NumDescriptors = 1;   // u0: 1x1 R32_UINT accumulator
+        motionRanges[1].BaseShaderRegister = 0;
+        motionRanges[1].RegisterSpace = 0;
+        motionRanges[1].OffsetInDescriptorsFromTableStart = 1;
+
+        D3D12_ROOT_PARAMETER motionParams[2] = {};
+        motionParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        motionParams[0].Constants.ShaderRegister = 0;
+        motionParams[0].Constants.RegisterSpace = 0;
+        motionParams[0].Constants.Num32BitValues = 5;
+        motionParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        motionParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        motionParams[1].DescriptorTable.NumDescriptorRanges = 2;
+        motionParams[1].DescriptorTable.pDescriptorRanges = motionRanges;
+        motionParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_ROOT_SIGNATURE_DESC motionRootDesc = {};
+        motionRootDesc.NumParameters = 2;
+        motionRootDesc.pParameters = motionParams;
+
+        ID3DBlob* signatureBlob = nullptr;
+        ID3DBlob* errorBlob = nullptr;
+        HRESULT hrM = D3D12SerializeRootSignature(&motionRootDesc, D3D_ROOT_SIGNATURE_VERSION_1, &signatureBlob, &errorBlob);
+        if (SUCCEEDED(hrM)) {
+            hrM = device->CreateRootSignature(0, signatureBlob->GetBufferPointer(), signatureBlob->GetBufferSize(), IID_PPV_ARGS(&g_rootSigMotion));
+            signatureBlob->Release();
+        }
+        if (FAILED(hrM)) {
+            Log("[Proxy] Motion root signature failed (hr=0x%08X) — adaptive skip disabled", hrM);
+            if (errorBlob) errorBlob->Release();
+        }
+    }
+
+    auto CreateTinyBuffer = [&](D3D12_HEAP_TYPE type, D3D12_RESOURCE_FLAGS flags, D3D12_RESOURCE_STATES state) -> ID3D12Resource* {
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = type;
+        D3D12_RESOURCE_DESC d = {};
+        d.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        d.Width = 4;
+        d.Height = 1;
+        d.DepthOrArraySize = 1;
+        d.MipLevels = 1;
+        d.SampleDesc.Count = 1;
+        d.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+        d.Flags = flags;
+        ID3D12Resource* r = nullptr;
+        if (FAILED(device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d, state, nullptr, IID_PPV_ARGS(&r))))
+            return nullptr;
+        return r;
+    };
+
+    if (g_rootSigMotion) {
+        g_motionBuf = CreateTinyBuffer(D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+                                       D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        g_motionZero = CreateTinyBuffer(D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_FLAG_NONE,
+                                        D3D12_RESOURCE_STATE_COMMON);
+        for (int i = 0; i < 4; ++i)
+            g_motionStaging[i] = CreateTinyBuffer(D3D12_HEAP_TYPE_READBACK, D3D12_RESOURCE_FLAG_NONE,
+                                                  D3D12_RESOURCE_STATE_COPY_DEST);
+        if (g_motionBuf && g_motionZero && g_motionStaging[0] && g_motionStaging[1] &&
+            g_motionStaging[2] && g_motionStaging[3]) {
+            D3D12_COMPUTE_PIPELINE_STATE_DESC motionPsoDesc = {};
+            motionPsoDesc.pRootSignature = g_rootSigMotion;
+            motionPsoDesc.CS = { g_MotionShader, sizeof(g_MotionShader) };
+            hrPso = device->CreateComputePipelineState(&motionPsoDesc, IID_PPV_ARGS(&g_psoMotion));
+            if (FAILED(hrPso)) {
+                Log("[Proxy] Motion PSO failed (hr=0x%08X) — adaptive skip disabled", hrPso);
+            } else {
+                Log("[Proxy] Motion-reduce pass initialized (adaptive VRNR scheduling ready)");
+            }
+        } else {
+            Log("[Proxy] Motion buffers allocation failed — adaptive skip disabled");
+        }
+    }
+
     D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-    heapDesc.NumDescriptors = 512;
+    heapDesc.NumDescriptors = 1024;   // 64 frames x 11 descriptors + headroom
     heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
@@ -1008,7 +1239,7 @@ static bool InitD3D12Pipeline(ID3D12Device* device) {
         return false;
     }
 
-    Log("[Proxy] D3D12 compute pipeline initialized (512 descriptors)");
+    Log("[Proxy] D3D12 compute pipeline initialized (1024 descriptors)");
     return true;
 }
 
@@ -1333,7 +1564,8 @@ static int EvaluateFeatureInternal(
                 }
                 slot->colorSmall = CreateScratchTexture(device, scratchFormat, workW, workH);
                 slot->outputSmall = CreateScratchTexture(device, scratchFormat, workW, workH);
-                if (!slot->colorSmall || !slot->outputSmall) {
+                slot->inputSnapshot = CreateScratchTexture(device, scratchFormat, workW, workH);
+                if (!slot->colorSmall || !slot->outputSmall || !slot->inputSnapshot) {
                     slot->allocFailed = true;
                     slot->lastAllocAttemptTick = now;
                     Log("[Proxy] Scratch texture allocation failed for %ux%u, backing off for 2s", workW, workH);
@@ -1486,7 +1718,7 @@ static int EvaluateFeatureInternal(
 
     device->Release();
 
-    if (!slot->colorSmall || !slot->outputSmall || !slot->activeFeature) {
+    if (!slot->colorSmall || !slot->outputSmall || !slot->inputSnapshot || !slot->activeFeature) {
         return real_Evaluate(InCmdList, InFeatureHandle, InParameters, InCallback);
     }
 
@@ -1563,8 +1795,34 @@ static int EvaluateFeatureInternal(
         s_evaluateFrameIndex++;
     }
 
-    bool isVrnrActive = g_enableProxy.load() && g_enableVrnr.load() && isScalingActive;
-    bool isSkipFrame = (isVrnrActive && slot->hasEvaluatedOnce && ((s_evaluateFrameIndex % 2) == 1));
+    int vrnrInterval = g_vrnrInterval.load();
+    if (vrnrInterval < 1) vrnrInterval = 1;
+    bool isVrnrActive = g_enableProxy.load() && (vrnrInterval > 1) && isScalingActive;
+
+    // Plan D readback: the ring slot written two frames ago carries the summed
+    // per-tile motion (x1024 fixed point). No fences involved — a torn read
+    // only skews the heuristic, never image correctness.
+    bool firstPassOfFrame = (s_passCountThisFrame == 0);
+    if (isVrnrActive && firstPassOfFrame) {
+        if (g_motionIdx >= 2 && g_motionStaging[(g_motionIdx - 2) & 3]) {
+            UINT32* p = nullptr;
+            D3D12_RANGE readRange{ 0, 4 };
+            if (SUCCEEDED(g_motionStaging[(g_motionIdx - 2) & 3]->Map(0, &readRange, (void**)&p))) {
+                float sum = (float)p[0] / 1024.0f;
+                g_lastMotion = (g_motionTileCount > 0) ? (sum / (float)g_motionTileCount) : 0.0f;
+                D3D12_RANGE written{ 0, 0 };
+                g_motionStaging[(g_motionIdx - 2) & 3]->Unmap(0, &written);
+            }
+        } else {
+            g_lastMotion = 0.0f;
+        }
+    }
+
+    // Plan D: while the scene moves (per MV average), keep running the NR
+    // every frame even though the base cadence would skip.
+    bool motionHigh = (isVrnrActive && g_vrnrSched.load() && mvecRes && g_lastMotion > 0.35f);
+    bool isSkipFrame = (isVrnrActive && slot->hasEvaluatedOnce && !motionHigh &&
+                        ((s_evaluateFrameIndex % vrnrInterval) != 0));
 
     // Update live telemetry for companion UI
     if (g_proxySharedConfig && g_proxySharedConfig->magic == DLSSNR_MAGIC) {
@@ -1634,7 +1892,7 @@ static int EvaluateFeatureInternal(
     UINT descSize = g_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     static uint32_t s_frameSlot = 0;
     s_frameSlot = (s_frameSlot + 1) % 64;
-    uint32_t baseSlot = s_frameSlot * 8;
+    uint32_t baseSlot = s_frameSlot * 11;   // 0,1: downsample | 2..8: resolve | 9,10: motion
 
     D3D12_CPU_DESCRIPTOR_HANDLE heapCpuStart = g_descHeap->GetCPUDescriptorHandleForHeapStart();
     D3D12_GPU_DESCRIPTOR_HANDLE heapGpuStart = g_descHeap->GetGPUDescriptorHandleForHeapStart();
@@ -1648,8 +1906,43 @@ static int EvaluateFeatureInternal(
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
     uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
 
-    if (!isSkipFrame) {
-        // Pass 1: Downsample native color to scratch input
+    // --- Motion-reduce pass (Plan D signal): first pass of the frame only ---
+    if (isVrnrActive && firstPassOfFrame && g_psoMotion && g_rootSigMotion && g_motionBuf && mvecRes) {
+        g_motionTileCount = ((nativeW + 15) / 16) * ((nativeH + 15) / 16);
+
+        TransitionBarrier(InCmdList, g_motionBuf, g_motionBufState, D3D12_RESOURCE_STATE_COPY_DEST);
+        g_motionBufState = D3D12_RESOURCE_STATE_COPY_DEST;
+        InCmdList->CopyBufferRegion(g_motionBuf, 0, g_motionZero, 0, 4);
+        TransitionBarrier(InCmdList, g_motionBuf, g_motionBufState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        g_motionBufState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuMv0 = { heapCpuStart.ptr + (baseSlot + 9) * descSize };
+        D3D12_CPU_DESCRIPTOR_HANDLE cpuMv1 = { heapCpuStart.ptr + (baseSlot + 10) * descSize };
+        D3D12_GPU_DESCRIPTOR_HANDLE gpuMv  = { heapGpuStart.ptr + (baseSlot + 9) * descSize };
+        srvDesc.Format = mvecRes->GetDesc().Format;
+        g_device->CreateShaderResourceView(mvecRes, &srvDesc, cpuMv0);
+        uavDesc.Format = DXGI_FORMAT_R32_UINT;
+        g_device->CreateUnorderedAccessView(g_motionBuf, nullptr, &uavDesc, cpuMv1);
+
+        InCmdList->SetComputeRootSignature(g_rootSigMotion);
+        InCmdList->SetDescriptorHeaps(1, heaps);
+        MotionConstants mConst = { origMvX, origMvY, nativeW, nativeH, 1 };
+        InCmdList->SetComputeRoot32BitConstants(0, 5, &mConst, 0);
+        InCmdList->SetComputeRootDescriptorTable(1, gpuMv);
+        InCmdList->SetPipelineState(g_psoMotion);
+        InCmdList->Dispatch((nativeW + 15) / 16, (nativeH + 15) / 16, 1);
+
+        TransitionBarrier(InCmdList, g_motionBuf, g_motionBufState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        g_motionBufState = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        InCmdList->CopyBufferRegion(g_motionStaging[g_motionIdx & 3], 0, g_motionBuf, 0, 4);
+        TransitionBarrier(InCmdList, g_motionBuf, g_motionBufState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        g_motionBufState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        g_motionIdx++;
+    }
+
+    // Pass 1: Downsample native color to scratch input — ALWAYS, so skip
+    // frames also get a fresh low-res for the Plan-A motion blend.
+    {
         TransitionBarrier(InCmdList, slot->colorSmall, slot->colorSmallState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         slot->colorSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
@@ -1674,7 +1967,9 @@ static int EvaluateFeatureInternal(
 
         TransitionBarrier(InCmdList, slot->colorSmall, slot->colorSmallState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         slot->colorSmallState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    }
 
+    if (!isSkipFrame) {
         TransitionBarrier(InCmdList, slot->outputSmall, slot->outputSmallState, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         slot->outputSmallState = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
 
@@ -1734,6 +2029,18 @@ static int EvaluateFeatureInternal(
 
         slot->hasEvaluatedOnce = true;
 
+        // Snapshot the input the NR just saw (work-res copy). Skip frames read
+        // this as the "stale input" reference for the edit fade and Plan-A blend.
+        TransitionBarrier(InCmdList, slot->colorSmall, slot->colorSmallState, D3D12_RESOURCE_STATE_COPY_SOURCE);
+        slot->colorSmallState = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        TransitionBarrier(InCmdList, slot->inputSnapshot, slot->inputSnapshotState, D3D12_RESOURCE_STATE_COPY_DEST);
+        slot->inputSnapshotState = D3D12_RESOURCE_STATE_COPY_DEST;
+        InCmdList->CopyResource(slot->inputSnapshot, slot->colorSmall);
+        TransitionBarrier(InCmdList, slot->colorSmall, slot->colorSmallState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        slot->colorSmallState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        TransitionBarrier(InCmdList, slot->inputSnapshot, slot->inputSnapshotState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        slot->inputSnapshotState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+
         TransitionBarrier(InCmdList, slot->outputSmall, slot->outputSmallState, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         slot->outputSmallState = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
     }
@@ -1771,7 +2078,9 @@ static int EvaluateFeatureInternal(
     D3D12_CPU_DESCRIPTOR_HANDLE cpuRes1 = { heapCpuStart.ptr + (baseSlot + 3) * descSize };
     D3D12_CPU_DESCRIPTOR_HANDLE cpuRes2 = { heapCpuStart.ptr + (baseSlot + 4) * descSize };
     D3D12_CPU_DESCRIPTOR_HANDLE cpuRes3 = { heapCpuStart.ptr + (baseSlot + 5) * descSize };
-    D3D12_CPU_DESCRIPTOR_HANDLE cpuRes4 = { heapCpuStart.ptr + (baseSlot + 6) * descSize };
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuRes4 = { heapCpuStart.ptr + (baseSlot + 6) * descSize };  // t4: last input snapshot
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuRes5 = { heapCpuStart.ptr + (baseSlot + 7) * descSize };  // t5: motion vectors
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuResUav = { heapCpuStart.ptr + (baseSlot + 8) * descSize };
     D3D12_GPU_DESCRIPTOR_HANDLE gpuHandleResolve = { heapGpuStart.ptr + (baseSlot + 2) * descSize };
 
     srvDesc.Format = scratchFormat;
@@ -1806,8 +2115,20 @@ static int EvaluateFeatureInternal(
         g_device->CreateShaderResourceView(slot->colorSmall, &srvDesc, cpuRes3);
     }
 
+    // t4: input snapshot the NR last saw (falls back to the fresh input)
+    srvDesc.Format = scratchFormat;
+    g_device->CreateShaderResourceView(slot->inputSnapshot ? slot->inputSnapshot : slot->colorSmall, &srvDesc, cpuRes4);
+    // t5: native motion vectors (falls back to the fresh input, flagged off)
+    if (mvecRes) {
+        srvDesc.Format = mvecRes->GetDesc().Format;
+        g_device->CreateShaderResourceView(mvecRes, &srvDesc, cpuRes5);
+    } else {
+        srvDesc.Format = scratchFormat;
+        g_device->CreateShaderResourceView(slot->colorSmall, &srvDesc, cpuRes5);
+    }
+
     uavDesc.Format = resolveWriteFormat;
-    g_device->CreateUnorderedAccessView(resolveWriteDest, nullptr, &uavDesc, cpuRes4);
+    g_device->CreateUnorderedAccessView(resolveWriteDest, nullptr, &uavDesc, cpuResUav);
 
     InCmdList->SetComputeRootSignature(g_rootSigResolve);
     InCmdList->SetDescriptorHeaps(1, heaps);
@@ -1828,8 +2149,12 @@ static int EvaluateFeatureInternal(
     resConstants.colorStrength = g_colorStrength.load();
     resConstants.isSkipFrame = isSkipFrame ? 1 : 0;
     resConstants.hasDepth = hasValidDepth ? 1 : 0;
+    resConstants.mvScaleX = origMvX;
+    resConstants.mvScaleY = origMvY;
+    resConstants.vrnrBlend = g_vrnrBlend.load() ? 1.0f : 0.0f;
+    resConstants.hasMv = mvecRes ? 1 : 0;
 
-    InCmdList->SetComputeRoot32BitConstants(0, 10, &resConstants, 0);
+    InCmdList->SetComputeRoot32BitConstants(0, 15, &resConstants, 0);
     InCmdList->SetComputeRootDescriptorTable(1, gpuHandleResolve);
     InCmdList->SetPipelineState(g_psoResolve);
     InCmdList->Dispatch((nativeW + 7) / 8, (nativeH + 7) / 8, 1);

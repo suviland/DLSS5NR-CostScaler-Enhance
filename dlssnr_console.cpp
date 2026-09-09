@@ -43,7 +43,7 @@ static void BuildIniPath() {
 
 static void ClampAll() {
     if (s_cfg.scale < 0.25f) s_cfg.scale = 0.25f;
-    if (s_cfg.scale > 1.00f) s_cfg.scale = 1.00f;
+    if (s_cfg.scale > 2.00f) s_cfg.scale = 2.00f;
     s_cfg.scale = (float)((int)(s_cfg.scale * 100.0f + 0.5f)) / 100.0f;
     if (s_cfg.mode != 0 && s_cfg.mode != 1) s_cfg.mode = 1;
     if (s_cfg.transfer < 0.0f) s_cfg.transfer = 0.0f;
@@ -52,6 +52,20 @@ static void ClampAll() {
     if (s_cfg.color > 1.0f) s_cfg.color = 1.0f;
     if (s_cfg.sharpness < 0.0f) s_cfg.sharpness = 0.0f;
     if (s_cfg.sharpness > 1.0f) s_cfg.sharpness = 1.0f;
+    if (s_cfg.scaleX < 0.25f) s_cfg.scaleX = 0.25f;
+    if (s_cfg.scaleX > 2.00f) s_cfg.scaleX = 2.00f;
+    if (s_cfg.scaleY < 0.25f) s_cfg.scaleY = 0.25f;
+    if (s_cfg.scaleY > 2.00f) s_cfg.scaleY = 2.00f;
+    if (s_cfg.nrStyle < 0 || s_cfg.nrStyle > 2) s_cfg.nrStyle = 0;
+    if (s_cfg.nrIntensity  < 0.0f) s_cfg.nrIntensity  = 0.0f;
+    if (s_cfg.nrIntensity  > 2.0f) s_cfg.nrIntensity  = 2.0f;
+    if (s_cfg.nrLocalStruct < 0.0f) s_cfg.nrLocalStruct = 0.0f;
+    if (s_cfg.nrLocalStruct > 2.0f) s_cfg.nrLocalStruct = 2.0f;
+    if (s_cfg.nrLocalTone  < 0.0f) s_cfg.nrLocalTone  = 0.0f;
+    if (s_cfg.nrLocalTone  > 2.0f) s_cfg.nrLocalTone  = 2.0f;
+    if (s_cfg.nrSkinStruct < -1.0f) s_cfg.nrSkinStruct = -1.0f;
+    if (s_cfg.nrSkinStruct >  2.0f) s_cfg.nrSkinStruct =  2.0f;
+    if (s_cfg.vrnrInterval < 1 || s_cfg.vrnrInterval > 3) s_cfg.vrnrInterval = 1;
 }
 
 static void LoadIni() {
@@ -83,6 +97,33 @@ static void LoadIni() {
     s_cfg.uiLanguage = lang;
     SetLang(lang);   // sync the global display language
 
+    // v0.6.0 upstream features
+    {
+        int enableAlt = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_iniPath) != 0;
+        int vi = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrInterval", 0, s_iniPath);
+        if (vi < 1 || vi > 3) vi = enableAlt ? 2 : 1;   // legacy INIs carry only the on/off flag
+        s_cfg.vrnrInterval = vi;
+    }
+    s_cfg.vrnrBlend  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrBlend", 1, s_iniPath) != 0;
+    s_cfg.vrnrSched  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", 0, s_iniPath) != 0;
+    s_cfg.depthAware  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, s_iniPath) != 0;
+    s_cfg.anamorphic  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAnamorphic", 0, s_iniPath) != 0;
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleX", L"0.65", buf, 64, s_iniPath);
+    s_cfg.scaleX = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleY", L"0.85", buf, 64, s_iniPath);
+    s_cfg.scaleY = (float)_wtof(buf);
+    s_cfg.useCustomNR = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseCustomSettings", 0, s_iniPath) != 0;
+    s_cfg.nrStyle     = (int)GetPrivateProfileIntW(L"DLSSNR_Settings", L"Style", 0, s_iniPath);
+    GetPrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", L"1.00", buf, 64, s_iniPath);
+    s_cfg.nrIntensity = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Settings", L"LocalStructureStrength", L"1.00", buf, 64, s_iniPath);
+    s_cfg.nrLocalStruct = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Settings", L"LocalToneStrength", L"1.00", buf, 64, s_iniPath);
+    s_cfg.nrLocalTone = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Settings", L"SkinStructureStrength", L"-1.00", buf, 64, s_iniPath);
+    s_cfg.nrSkinStruct = (float)_wtof(buf);
+    s_cfg.nrAutoMask   = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseAutoMask", 0, s_iniPath) != 0;
+
     ClampAll();
 }
 
@@ -107,6 +148,21 @@ static void SaveIni() {
     swprintf_s(buf, L"%d", s_cfg.keyScaleDown);   SaveIniValue(L"Hotkeys", L"KeyScaleDown", buf);
     swprintf_s(buf, L"%d", s_cfg.keyToggleUi);    SaveIniValue(L"Hotkeys", L"KeyToggleUI", buf);
     swprintf_s(buf, L"%u", (uint32_t)s_cfg.uiLanguage); SaveIniValue(L"DLSSNR_Proxy", L"UiLanguage", buf);
+    SaveIniValue(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", s_cfg.depthAware ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"EnableAlternatingFrames", (s_cfg.vrnrInterval > 1) ? L"1" : L"0");
+    swprintf_s(buf, L"%u", (uint32_t)s_cfg.vrnrInterval); SaveIniValue(L"DLSSNR_Proxy", L"VrnrInterval", buf);
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrBlend", s_cfg.vrnrBlend ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", s_cfg.vrnrSched ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"EnableAnamorphic", s_cfg.anamorphic ? L"1" : L"0");
+    swprintf_s(buf, L"%.2f", s_cfg.scaleX);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleX", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.scaleY);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleY", buf);
+    SaveIniValue(L"DLSSNR_Settings", L"UseCustomSettings", s_cfg.useCustomNR ? L"1" : L"0");
+    swprintf_s(buf, L"%u", (uint32_t)s_cfg.nrStyle);   SaveIniValue(L"DLSSNR_Settings", L"Style", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.nrIntensity);       SaveIniValue(L"DLSSNR_Settings", L"Intensity", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.nrLocalStruct);     SaveIniValue(L"DLSSNR_Settings", L"LocalStructureStrength", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.nrLocalTone);       SaveIniValue(L"DLSSNR_Settings", L"LocalToneStrength", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.nrSkinStruct);      SaveIniValue(L"DLSSNR_Settings", L"SkinStructureStrength", buf);
+    swprintf_s(buf, L"%u", s_cfg.nrAutoMask ? 1u : 0u); SaveIniValue(L"DLSSNR_Settings", L"UseAutoMask", buf);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, s_iniPath); // flush
 }
 
@@ -127,6 +183,21 @@ static void PushShared() {
     g_sh->enableUi         = s_cfg.enableUi ? 1 : 0;
     g_sh->keyToggleUi      = (uint32_t)s_cfg.keyToggleUi;
     g_sh->uiLanguage       = (uint32_t)s_cfg.uiLanguage;
+    g_sh->enableDepthAware = s_cfg.depthAware ? 1 : 0;
+    g_sh->enableVrnr       = (s_cfg.vrnrInterval > 1) ? 1 : 0;
+    g_sh->vrnrInterval     = (uint32_t)s_cfg.vrnrInterval;
+    g_sh->vrnrBlend        = s_cfg.vrnrBlend ? 1 : 0;
+    g_sh->vrnrSched        = s_cfg.vrnrSched ? 1 : 0;
+    g_sh->enableAnamorphic = s_cfg.anamorphic ? 1 : 0;
+    g_sh->scaleX           = s_cfg.scaleX;
+    g_sh->scaleY           = s_cfg.scaleY;
+    g_sh->useCustomNR      = s_cfg.useCustomNR ? 1 : 0;
+    g_sh->nrStyle          = (uint32_t)s_cfg.nrStyle;
+    g_sh->nrIntensity      = s_cfg.nrIntensity;
+    g_sh->nrLocalStructureStrength = s_cfg.nrLocalStruct;
+    g_sh->nrLocalToneStrength      = s_cfg.nrLocalTone;
+    g_sh->nrSkinStructureStrength  = s_cfg.nrSkinStruct;
+    g_sh->nrUseAutoMask    = s_cfg.nrAutoMask ? 1 : 0;
     g_sh->writerSource     = 1;                 // standalone console
     g_sh->version++;
     s_lastVersion = g_sh->version;
@@ -150,6 +221,24 @@ static void AdoptFromShared() {
     s_cfg.uiLanguage     = (int)g_sh->uiLanguage;
     if (s_cfg.uiLanguage < 0 || s_cfg.uiLanguage >= L_COUNT) s_cfg.uiLanguage = (int)L_ZH;
     SetLang(s_cfg.uiLanguage);
+    s_cfg.depthAware  = g_sh->enableDepthAware != 0;
+    {
+        int vi = (int)g_sh->vrnrInterval;
+        if (vi < 1 || vi > 3) vi = g_sh->enableVrnr ? 2 : 1;
+        s_cfg.vrnrInterval = vi;
+    }
+    s_cfg.vrnrBlend   = g_sh->vrnrBlend != 0;
+    s_cfg.vrnrSched   = g_sh->vrnrSched != 0;
+    s_cfg.anamorphic  = g_sh->enableAnamorphic != 0;
+    s_cfg.scaleX      = g_sh->scaleX;
+    s_cfg.scaleY      = g_sh->scaleY;
+    s_cfg.useCustomNR = g_sh->useCustomNR != 0;
+    s_cfg.nrStyle     = (int)g_sh->nrStyle;
+    s_cfg.nrIntensity = g_sh->nrIntensity;
+    s_cfg.nrLocalStruct = g_sh->nrLocalStructureStrength;
+    s_cfg.nrLocalTone   = g_sh->nrLocalToneStrength;
+    s_cfg.nrSkinStruct  = g_sh->nrSkinStructureStrength;
+    s_cfg.nrAutoMask    = g_sh->nrUseAutoMask != 0;
     ClampAll();
 }
 
@@ -215,16 +304,23 @@ static void HooksCommit(const UiValues& v, void*) {
 // Window host (main thread)
 // ===========================================================================
 static constexpr int kClientW = 396;
+static constexpr int kDefaultH = 640;   // roomier default height (was content-fit ~450)
 static PanelHooks g_hooks;
 static Panel      g_panel;
 
 static void SavePanelPos(HWND hwnd) {
     RECT wr; GetWindowRect(hwnd, &wr);
+    RECT cr; GetClientRect(hwnd, &cr);
     wchar_t b[24];
     swprintf_s(b, L"%d", (int)wr.left);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelX", b, s_iniPath);
     swprintf_s(b, L"%d", (int)wr.top);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelY", b, s_iniPath);
+    // Remember the free-resized client size too (restored on next launch).
+    swprintf_s(b, L"%d", (int)cr.right);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelW", b, s_iniPath);
+    swprintf_s(b, L"%d", (int)cr.bottom);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelH", b, s_iniPath);
 }
 static void PlaceWindow(HWND hwnd, int w, int h) {
     // Honor the position remembered in the ini ([DLSSNR_Proxy] PanelX/PanelY),
@@ -253,8 +349,34 @@ static void PlaceWindow(HWND hwnd, int w, int h) {
 
 static LRESULT CALLBACK ConsoleWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-    case WM_NCHITTEST:
+    case WM_NCHITTEST: {
+        // Borderless free-resize: expose the native sizing loop along the
+        // window edges (the panel itself only ever sees HTCLIENT clicks).
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        RECT wr; GetWindowRect(hwnd, &wr);
+        const int Z = 6;
+        bool L = pt.x < wr.left + Z, R = pt.x >= wr.right - Z;
+        bool T = pt.y < wr.top + Z,  B = pt.y >= wr.bottom - Z;
+        if (T && L) return HTTOPLEFT;
+        if (T && R) return HTTOPRIGHT;
+        if (B && L) return HTBOTTOMLEFT;
+        if (B && R) return HTBOTTOMRIGHT;
+        if (L) return HTLEFT;
+        if (R) return HTRIGHT;
+        if (T) return HTTOP;
+        if (B) return HTBOTTOM;
         return HTCLIENT;
+    }
+    case WM_GETMINMAXINFO: {
+        // Keep the panel usable: tab bar + at least the footer stay visible.
+        MINMAXINFO* mmi = (MINMAXINFO*)lp;
+        mmi->ptMinTrackSize.x = Panel::kMinW;
+        mmi->ptMinTrackSize.y = Panel::kMinH;
+        return 0;
+    }
+    case WM_SIZE:
+        InvalidateRect(hwnd, nullptr, FALSE);   // repaint at the new size
+        break;
     case WM_KEYDOWN:
         if (wp == VK_ESCAPE && !g_panel.IsCapturing()) {
             DestroyWindow(hwnd);
@@ -262,10 +384,12 @@ static LRESULT CALLBACK ConsoleWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         break;
     case WM_CLOSE:
-        SavePanelPos(hwnd);   // remember where the user left the panel
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        // Persist position + size on every teardown path: WM_CLOSE, the
+        // header × button, and the Esc key all funnel through here.
+        SavePanelPos(hwnd);
         PostQuitMessage(0);
         return 0;
     default:
@@ -313,9 +437,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     g_panel.W = kClientW;
     g_panel.H = 100;
     g_panel.RebuildLayout();
-    int need = g_panel.contentH > 100 ? g_panel.contentH : 100;
-    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, kClientW, need, SWP_NOMOVE | SWP_NOACTIVATE);
-    PlaceWindow(hwnd, kClientW, need);
+    // Restore the last free-resized size if one was saved; otherwise fit the
+    // current page's content height.
+    int useW = kClientW, useH = g_panel.contentH > 100 ? g_panel.contentH : 100;
+    if (useH < kDefaultH) useH = kDefaultH;   // roomier default panel height
+    {
+        int pw = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelW", -1, s_iniPath);
+        int ph = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelH", -1, s_iniPath);
+        if (pw >= Panel::kMinW && ph >= Panel::kMinH) { useW = pw; useH = ph; }
+    }
+    // Never taller/wider than the primary work area (plus a small margin).
+    {
+        RECT wa; SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+        if (useW > wa.right - wa.left - 28) useW = wa.right - wa.left - 28;
+        if (useH > wa.bottom - wa.top - 28) useH = wa.bottom - wa.top - 28;
+        if (useW < Panel::kMinW) useW = Panel::kMinW;
+        if (useH < Panel::kMinH) useH = Panel::kMinH;
+    }
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, useW, useH, SWP_NOMOVE | SWP_NOACTIVATE);
+    g_panel.W = useW;
+    g_panel.H = useH;
+    g_panel.RebuildLayout();
+    PlaceWindow(hwnd, useW, useH);
     SetTimer(hwnd, Panel::kTimer, 50, nullptr);
 
     MSG msg;

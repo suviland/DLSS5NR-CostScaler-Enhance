@@ -45,6 +45,11 @@ struct DlssnrSharedConfig {
     uint32_t nrUseAutoMask;            // 0 = Off, 1 = On
     uint32_t useCustomNR;              // 0 = Passthrough caller's NR params, 1 = Override with proxy values
 
+    // VRNR (frame-alternating inference) tuning
+    uint32_t vrnrInterval;             // Run NR every Nth frame (1 = every frame / off, 2 or 3)
+    uint32_t vrnrBlend;                // 1 = Motion-adaptive blend on skipped frames (Plan A)
+    uint32_t vrnrSched;                // 1 = Adaptive scheduling: run NR every frame while moving (Plan D)
+
     // Telemetry & Diagnostics
     uint32_t debugNativeW;
     uint32_t debugNativeH;

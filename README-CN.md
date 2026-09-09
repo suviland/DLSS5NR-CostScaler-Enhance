@@ -115,6 +115,10 @@ EnableAlternatingFrames = 0 ; 隔帧推理 VRNR（实验，默认关）
 EnableHotkeys = 1        ; 游戏内热键总开关
 EnableUi = 1             ; 游戏内面板总开关
 UiLanguage = 0           ; 面板语言：0 中 / 1 EN / 2 RU / 3 한
+PanelX = 1500            ; 面板窗口位置 X（像素；隐藏 / 退出时自动保存）
+PanelY = 120             ; 面板窗口位置 Y（像素）
+PanelW = 396             ; 面板窗口宽度（自由缩放后自动保存；独立控制台同样读写）
+PanelH = 640             ; 面板窗口高度（自由缩放后自动保存；控制台默认 640）
 
 [DLSSNR_Settings]
 UseCustomSettings = 0    ; 0 = 透传调用方的 NR 参数；1 = 用下面的值覆盖
