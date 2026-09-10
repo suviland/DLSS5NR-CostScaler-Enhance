@@ -1,30 +1,3 @@
-// ================================================================================================
-// proxy_main.cpp — nvngx_dlssnr.dll 代理本体（本项目核心）
-// ================================================================================================
-// 职责：
-//   1. 以「代理 DLL」身份被游戏加载（文件名 nvngx_dlssnr.dll），同目录的
-//      nvngx_dlssnr_real.dll 是 NVIDIA 原版，由 forwarders.h 负责加载与函数转发。
-//   2. Hook NGX 入口（Init/CreateFeature/Evaluate/ReleaseFeature），把游戏的
-//      DLSS-NR 输入帧降采样到 work 分辨率（省算力），跑完 NR 后用
-//      CS_Resolve 着色器把神经网络的「编辑量」合成回原生分辨率输出。
-//   3. INI（nvngx_dlssnr.ini）配置 + 共享内存（dlssnr_shared.h）三端联动 +
-//      热键 + 内嵌游戏面板（proxy_ui.cpp / ui_panel.h）。
-//
-// 关键流程（EvaluateInternal）：
-//   游戏提交原生帧 → CS_Downsample 降采样到 colorSmall → 真实 NR（work 分辨率）
-//   → CS_Resolve 用 outputSmall 与 colorSmall 的差值（edit）叠加回 origOutput。
-//   isSkipFrame（隔帧推理 VRNR）时跳过 NR，直接用陈旧编辑量衰减淡出。
-//
-// 崩溃防线（重要教训，勿删）：
-//   - 所有 real_* 调用点的失败分支绝不能用「游戏手里已被 park 的旧句柄」转发
-//     real_Evaluate——那是 use-after-free（0.7.x 时代的 0xC0000005 血案）。
-//   - ParkNrFeature 只是把句柄挂进延迟回收列表；ReleaseFeature 可能对同一
-//     句柄再次调用，注意不要双重 real_Release。
-//
-// 日志：nvngx_dlssnr_proxy.log 写在 DLL 所在目录；排查游戏崩溃先看它。
-// 上游基线：算法层与上游 DLSSNR-Cost-Scaler main 分支一致（_upstream_ref/ 有参照）。
-// ================================================================================================
-
 #include <mutex>
 #include <vector>
 #include <unordered_map>
@@ -43,8 +16,6 @@
 #include "Downsample_Shader.h"
 #include "Resolve_Shader.h"
 #include "dlssnr_shared.h"
-#include "ui_panel.h"
-#include "proxy_ui.h"
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -88,12 +59,6 @@ static void Log(const char* fmt, ...) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 运行时配置（原子变量）：游戏渲染线程每帧读取，UI/共享内存线程热更新。
-// 字段与 dlssnr_shared.h 的 DlssnrSharedConfig 一一对应；ini 键见 LoadConfig()。
-// ⚠️ 新增设置项：这里 + DlssnrSharedConfig + LoadConfig + PushProxyToSharedMemory
-//    + UiPullConfig/UiApplyLive/UiCommitConfig 五处同步（详见 ui_panel.h 维护速查）。
-// ─────────────────────────────────────────────────────────────────────────────
 static std::atomic<bool>     g_enableProxy(true);
 static std::atomic<float>    g_scale(0.75f);
 static std::atomic<bool>     g_enableAnamorphic(false);
@@ -103,18 +68,8 @@ static std::atomic<uint32_t> g_enlargementMode(1);     // 1 = Matched Residual, 
 static std::atomic<float>    g_transferStrength(1.0f); // 0.0 to 2.0
 static std::atomic<float>    g_sharpness(0.20f);       // 0.0 to 1.0 (RCAS)
 static std::atomic<float>    g_colorStrength(1.00f);   // 0.0 to 1.0 (Issue #5)
-static std::atomic<bool>     g_enableHotkeys(true);
-static std::atomic<bool>     g_requireCtrlAlt(true);
-static std::atomic<int>      g_keyToggleProxy(VK_SPACE);
-static std::atomic<int>      g_keyToggleMode(VK_END);
-static std::atomic<int>      g_keyScaleUp(VK_PRIOR);
-static std::atomic<int>      g_keyScaleDown(VK_NEXT);
-static std::atomic<bool>     g_enableUi(true);       // allow Ctrl+Alt+F11 overlay toggle
-static std::atomic<int>      g_keyToggleUI(VK_F11);  // base key of the overlay toggle combo
-static std::atomic<int>      g_uiLanguage((int)dlssnr_ui::L_ZH);  // UI display language (zh/en/ru/ko)
 static std::atomic<bool>     g_enableVrnr(false);
 static std::atomic<bool>     g_enableDepthAware(true);
-static std::atomic<bool>     g_vrnrAntiFlicker(true);  // 0.6.3 跳帧防闪烁总开关
 static std::atomic<uint32_t> g_nrStyle(0);
 static std::atomic<float>    g_nrIntensity(1.00f);
 static std::atomic<float>    g_nrLocalStructureStrength(1.00f);
@@ -122,6 +77,12 @@ static std::atomic<float>    g_nrLocalToneStrength(1.00f);
 static std::atomic<float>    g_nrSkinStructureStrength(-1.00f);
 static std::atomic<uint32_t> g_nrUseAutoMask(0);
 static std::atomic<bool>     g_useCustomNR(false);    // false = passthrough caller's NR params
+static bool                  g_enableHotkeys = true;
+static bool                  g_requireCtrlAlt = true;
+static int                   g_keyToggleProxy = VK_SPACE;
+static int                   g_keyToggleMode  = VK_END;
+static int                   g_keyScaleUp     = VK_PRIOR;
+static int                   g_keyScaleDown   = VK_NEXT;
 static wchar_t               g_iniPath[MAX_PATH] = { 0 };
 static FILETIME              g_lastIniWriteTime = { 0 };
 
@@ -129,34 +90,17 @@ static HANDLE              g_hProxySharedMem = nullptr;
 static DlssnrSharedConfig* g_proxySharedConfig = nullptr;
 static uint32_t            s_lastProxySharedVersion = 0;
 
-// Serialises INI persistence + shared-memory pushes between the render thread
-// (hotkeys / hot-reload) and the overlay UI thread (panel commits).
-static std::recursive_mutex g_cfgLock;
-
-static void PushProxyToSharedMemory();   // defined below — used to seed a fresh mapping
-
 static void InitProxySharedMemory() {
     if (g_proxySharedConfig) return;
     g_hProxySharedMem = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(DlssnrSharedConfig), DLSSNR_SHARED_MEM_NAME);
     if (g_hProxySharedMem) {
-        DWORD createErr = GetLastError();
         g_proxySharedConfig = (DlssnrSharedConfig*)MapViewOfFile(g_hProxySharedMem, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(DlssnrSharedConfig));
-        if (g_proxySharedConfig && (createErr != ERROR_ALREADY_EXISTS || g_proxySharedConfig->magic != DLSSNR_MAGIC)) {
-            // We own a fresh or stale/unseeded mapping — seed it from the live
-            // atomics so a standalone console / companion launched later always
-            // finds valid data (and UI commits that happened before any feature
-            // call are not lost).
-            ZeroMemory(g_proxySharedConfig, sizeof(DlssnrSharedConfig));
-            g_proxySharedConfig->magic = DLSSNR_MAGIC;
-            PushProxyToSharedMemory();
-        }
     }
 }
 
-static void SaveConfigValueEx(const wchar_t* section, const wchar_t* key, const wchar_t* value) {
+static void SaveConfigValue(const wchar_t* key, const wchar_t* value) {
     if (g_iniPath[0] == L'\0') return;
-    std::lock_guard<std::recursive_mutex> cfgLock(g_cfgLock);
-    WritePrivateProfileStringW(section, key, value, g_iniPath);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", key, value, g_iniPath);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, g_iniPath);
     WIN32_FILE_ATTRIBUTE_DATA fileInfo;
     if (GetFileAttributesExW(g_iniPath, GetFileExInfoStandard, &fileInfo)) {
@@ -164,14 +108,8 @@ static void SaveConfigValueEx(const wchar_t* section, const wchar_t* key, const 
     }
 }
 
-static void SaveConfigValue(const wchar_t* key, const wchar_t* value) {
-    SaveConfigValueEx(L"DLSSNR_Proxy", key, value);
-}
-
 static void PushProxyToSharedMemory();
 
-// LoadConfig：从 DLL 同目录的 nvngx_dlssnr.ini 读全部配置（启动时一次）。
-// 运行中的热更新走 CheckConfigHotReload()（共享内存 version 变化时重读）。
 static void LoadConfig() {
     if (g_iniPath[0] == L'\0') {
         wchar_t exePath[MAX_PATH] = { 0 };
@@ -218,8 +156,7 @@ static void LoadConfig() {
     g_scaleY.store(syVal);
 
     g_enableProxy.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableProxy", 1, g_iniPath) != 0);
-    g_enableHotkeys.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableHotkeys", 1, g_iniPath) != 0);
-    g_enableUi.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableUi", 1, g_iniPath) != 0);
+    g_enableHotkeys = (GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableHotkeys", 1, g_iniPath) != 0);
 
     g_enlargementMode.store((uint32_t)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnlargementMode", 1, g_iniPath));
 
@@ -244,21 +181,8 @@ static void LoadConfig() {
     if (cVal > 1.0f) cVal = 1.0f;
     g_colorStrength.store(cVal);
 
-    g_requireCtrlAlt.store(GetPrivateProfileIntW(L"Hotkeys", L"RequireCtrlAlt", 1, g_iniPath) != 0);
-    g_keyToggleProxy.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleProxy", VK_SPACE, g_iniPath));
-    g_keyToggleMode.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleMode",  VK_END,   g_iniPath));
-    g_keyScaleUp.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleUp",     VK_PRIOR, g_iniPath));
-    g_keyScaleDown.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyScaleDown",   VK_NEXT,  g_iniPath));
-    g_keyToggleUI.store(GetPrivateProfileIntW(L"Hotkeys", L"KeyToggleUI", VK_F11, g_iniPath));
-    g_uiLanguage.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"UiLanguage", (int)dlssnr_ui::L_ZH, g_iniPath));
-    if (g_uiLanguage.load() < 0 || g_uiLanguage.load() >= dlssnr_ui::L_COUNT) g_uiLanguage.store((int)dlssnr_ui::L_ZH);
-    dlssnr_ui::SetLang(g_uiLanguage.load());  // keep the global display language in sync
-
-    Log("[Proxy] Config loaded: EnableProxy = %d, ResolutionScale = %.2f, EnlargementMode = %u, TransferStrength = %.2f, Sharpness = %.2f, ColorStrength = %.2f, EnableHotkeys = %d, EnableUi = %d, UiLanguage = %d",
-        g_enableProxy.load() ? 1 : 0, val, g_enlargementMode.load(), g_transferStrength.load(), g_sharpness.load(), g_colorStrength.load(), g_enableHotkeys.load() ? 1 : 0, g_enableUi.load() ? 1 : 0, g_uiLanguage.load());
     g_enableVrnr.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, g_iniPath) != 0);
     g_enableDepthAware.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, g_iniPath) != 0);
-    g_vrnrAntiFlicker.store(GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAntiFlicker", 1, g_iniPath) != 0);
 
     g_nrStyle.store((uint32_t)GetPrivateProfileIntW(L"DLSSNR_Settings", L"Style", 0, g_iniPath));
     wchar_t nrBuf[64] = { 0 };
@@ -289,11 +213,8 @@ static void LoadConfig() {
     PushProxyToSharedMemory();
 }
 
-// PushProxyToSharedMemory：把当前原子变量快照写进共享内存（writerSource=0=proxy）。
-// console / 管理器在「采用」时以 proxy 的值为准。三端字段同步规则见 dlssnr_shared.h 头。
 static void PushProxyToSharedMemory() {
     if (!g_proxySharedConfig || g_proxySharedConfig->magic != DLSSNR_MAGIC) return;
-    std::lock_guard<std::recursive_mutex> cfgLock(g_cfgLock);
     g_proxySharedConfig->enableProxy = g_enableProxy.load() ? 1 : 0;
     g_proxySharedConfig->resolutionScale = g_scale.load();
     g_proxySharedConfig->enableAnamorphic = g_enableAnamorphic.load() ? 1 : 0;
@@ -303,15 +224,6 @@ static void PushProxyToSharedMemory() {
     g_proxySharedConfig->transferStrength = g_transferStrength.load();
     g_proxySharedConfig->colorStrength = g_colorStrength.load();
     g_proxySharedConfig->sharpness = g_sharpness.load();
-    g_proxySharedConfig->enableHotkeys = g_enableHotkeys.load() ? 1 : 0;
-    g_proxySharedConfig->requireCtrlAlt = g_requireCtrlAlt.load() ? 1 : 0;
-    g_proxySharedConfig->keyToggleProxy = g_keyToggleProxy.load();
-    g_proxySharedConfig->keyToggleMode = g_keyToggleMode.load();
-    g_proxySharedConfig->keyScaleUp = g_keyScaleUp.load();
-    g_proxySharedConfig->keyScaleDown = g_keyScaleDown.load();
-    g_proxySharedConfig->enableUi = g_enableUi.load() ? 1 : 0;
-    g_proxySharedConfig->keyToggleUi = g_keyToggleUI.load();
-    g_proxySharedConfig->uiLanguage = (uint32_t)g_uiLanguage.load();
     g_proxySharedConfig->enableHotkeys = g_enableHotkeys ? 1 : 0;
     g_proxySharedConfig->requireCtrlAlt = g_requireCtrlAlt ? 1 : 0;
     g_proxySharedConfig->keyToggleProxy = g_keyToggleProxy;
@@ -321,7 +233,6 @@ static void PushProxyToSharedMemory() {
 
     g_proxySharedConfig->enableVrnr = g_enableVrnr.load() ? 1 : 0;
     g_proxySharedConfig->enableDepthAware = g_enableDepthAware.load() ? 1 : 0;
-    g_proxySharedConfig->vrnrAntiFlicker = g_vrnrAntiFlicker.load() ? 1 : 0;
     g_proxySharedConfig->nrStyle = g_nrStyle.load();
     g_proxySharedConfig->nrIntensity = g_nrIntensity.load();
     g_proxySharedConfig->nrLocalStructureStrength = g_nrLocalStructureStrength.load();
@@ -335,202 +246,6 @@ static void PushProxyToSharedMemory() {
     s_lastProxySharedVersion = g_proxySharedConfig->version;
 }
 
-// ---------------------------------------------------------------------------
-// Overlay UI <-> live config bridge (callbacks run on the overlay UI thread).
-// All fields are std::atomic so cross-thread access stays race-free.
-// ---------------------------------------------------------------------------
-// ── 内嵌面板桥接（proxy_ui.cpp 经 PanelHooks 调用）──────────────────────────
-// UiPullConfig   = 面板打开时取当前值；UiApplyLive = 单项实时生效（拖动滑条）；
-// UiCommitConfig = 点「应用」时全量生效并写 INI。位置/大小回调持久化 PanelX/Y/W/H。
-static void UiPullConfig(dlssnr_ui::UiValues& out, void*) {
-    out.enableProxy    = g_enableProxy.load();
-    out.scale          = g_scale.load();
-    out.mode           = (int)g_enlargementMode.load();
-    out.transfer       = g_transferStrength.load();
-    out.color          = g_colorStrength.load();
-    out.sharpness      = g_sharpness.load();
-    out.enableHotkeys  = g_enableHotkeys.load();
-    out.requireCtrlAlt = g_requireCtrlAlt.load();
-    out.enableUi       = g_enableUi.load();
-    out.keyToggleProxy = g_keyToggleProxy.load();
-    out.keyToggleMode  = g_keyToggleMode.load();
-    out.keyScaleUp     = g_keyScaleUp.load();
-    out.keyScaleDown   = g_keyScaleDown.load();
-    out.keyToggleUi    = g_keyToggleUI.load();
-    out.uiLanguage     = g_uiLanguage.load();
-    out.depthAware     = g_enableDepthAware.load();
-    out.vrnr           = g_enableVrnr.load();
-    out.vrnrAntiFlicker = g_vrnrAntiFlicker.load();
-    out.anamorphic     = g_enableAnamorphic.load();
-    out.scaleX         = g_scaleX.load();
-    out.scaleY         = g_scaleY.load();
-    out.useCustomNR    = g_useCustomNR.load();
-    out.nrStyle        = (int)g_nrStyle.load();
-    out.nrIntensity    = g_nrIntensity.load();
-    out.nrLocalStruct  = g_nrLocalStructureStrength.load();
-    out.nrLocalTone    = g_nrLocalToneStrength.load();
-    out.nrSkinStruct   = g_nrSkinStructureStrength.load();
-    out.nrAutoMask     = g_nrUseAutoMask.load() != 0;
-    dlssnr_ui::SetLang(out.uiLanguage);  // mirror into the global display lang
-}
-
-static void UiApplyLive(const dlssnr_ui::UiValues& v, int field, void*) {
-    switch ((dlssnr_ui::Field)field) {
-    case dlssnr_ui::F_ENABLE_PROXY: g_enableProxy.store(v.enableProxy); break;
-    case dlssnr_ui::F_SCALE:        g_scale.store(v.scale); break;
-    case dlssnr_ui::F_MODE:         g_enlargementMode.store((uint32_t)v.mode); break;
-    case dlssnr_ui::F_TRANSFER:     g_transferStrength.store(v.transfer); break;
-    case dlssnr_ui::F_COLOR:        g_colorStrength.store(v.color); break;
-    case dlssnr_ui::F_SHARP:        g_sharpness.store(v.sharpness); break;
-    case dlssnr_ui::F_ENABLE_HOTKEYS: g_enableHotkeys.store(v.enableHotkeys); break;
-    case dlssnr_ui::F_REQUIRE_CTRLALT: g_requireCtrlAlt.store(v.requireCtrlAlt); break;
-    case dlssnr_ui::F_ENABLE_UI:    g_enableUi.store(v.enableUi); break;
-    case dlssnr_ui::F_KEY_TOGGLE_PROXY: g_keyToggleProxy.store(v.keyToggleProxy); break;
-    case dlssnr_ui::F_KEY_TOGGLE_MODE:  g_keyToggleMode.store(v.keyToggleMode); break;
-    case dlssnr_ui::F_KEY_SCALEUP:      g_keyScaleUp.store(v.keyScaleUp); break;
-    case dlssnr_ui::F_KEY_SCALEDOWN:    g_keyScaleDown.store(v.keyScaleDown); break;
-    case dlssnr_ui::F_KEY_TOGGLEUI:     g_keyToggleUI.store(v.keyToggleUi); break;
-    case dlssnr_ui::F_DEPTH_AWARE:      g_enableDepthAware.store(v.depthAware); break;
-    case dlssnr_ui::F_VRNR:             g_enableVrnr.store(v.vrnr); break;
-    case dlssnr_ui::F_VRNR_AF:          g_vrnrAntiFlicker.store(v.vrnrAntiFlicker); break;
-    case dlssnr_ui::F_ANAMORPHIC:       g_enableAnamorphic.store(v.anamorphic); break;
-    case dlssnr_ui::F_SCALE_X:          g_scaleX.store(v.scaleX); break;
-    case dlssnr_ui::F_SCALE_Y:          g_scaleY.store(v.scaleY); break;
-    case dlssnr_ui::F_USE_CUSTOM_NR:    g_useCustomNR.store(v.useCustomNR); break;
-    case dlssnr_ui::F_NR_STYLE:         g_nrStyle.store((uint32_t)v.nrStyle); break;
-    case dlssnr_ui::F_NR_INTENSITY:     g_nrIntensity.store(v.nrIntensity); break;
-    case dlssnr_ui::F_NR_LOCAL_STRUCT:  g_nrLocalStructureStrength.store(v.nrLocalStruct); break;
-    case dlssnr_ui::F_NR_LOCAL_TONE:    g_nrLocalToneStrength.store(v.nrLocalTone); break;
-    case dlssnr_ui::F_NR_SKIN_STRUCT:   g_nrSkinStructureStrength.store(v.nrSkinStruct); break;
-    case dlssnr_ui::F_NR_AUTO_MASK:     g_nrUseAutoMask.store(v.nrAutoMask ? 1u : 0u); break;
-    default: break;
-    }
-}
-
-static void UiCommitConfig(const dlssnr_ui::UiValues& v, void*) {
-    // Mirror every field into the live atomics first (keeps behaviour identical
-    // whether the edit arrived via applyLive or directly through commit).
-    g_enableProxy.store(v.enableProxy);
-    g_scale.store(v.scale);
-    g_enlargementMode.store((uint32_t)v.mode);
-    g_transferStrength.store(v.transfer);
-    g_colorStrength.store(v.color);
-    g_sharpness.store(v.sharpness);
-    g_enableHotkeys.store(v.enableHotkeys);
-    g_requireCtrlAlt.store(v.requireCtrlAlt);
-    g_enableUi.store(v.enableUi);
-    g_keyToggleProxy.store(v.keyToggleProxy);
-    g_keyToggleMode.store(v.keyToggleMode);
-    g_keyScaleUp.store(v.keyScaleUp);
-    g_keyScaleDown.store(v.keyScaleDown);
-    g_keyToggleUI.store(v.keyToggleUi);
-    g_uiLanguage.store(v.uiLanguage);
-    dlssnr_ui::SetLang(v.uiLanguage);
-    g_enableDepthAware.store(v.depthAware);
-    g_enableVrnr.store(v.vrnr);
-    g_vrnrAntiFlicker.store(v.vrnrAntiFlicker);
-    g_enableAnamorphic.store(v.anamorphic);
-    g_scaleX.store(v.scaleX);
-    g_scaleY.store(v.scaleY);
-    g_useCustomNR.store(v.useCustomNR);
-    g_nrStyle.store((uint32_t)v.nrStyle);
-    g_nrIntensity.store(v.nrIntensity);
-    g_nrLocalStructureStrength.store(v.nrLocalStruct);
-    g_nrLocalToneStrength.store(v.nrLocalTone);
-    g_nrSkinStructureStrength.store(v.nrSkinStruct);
-    g_nrUseAutoMask.store(v.nrAutoMask ? 1u : 0u);
-
-    // Persist to the INI (sections match LoadConfig) then push to shared memory.
-    wchar_t buf[32];
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableProxy", v.enableProxy ? L"1" : L"0");
-    swprintf_s(buf, L"%.2f", v.scale);             SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScale", buf);
-    swprintf_s(buf, L"%u", (uint32_t)v.mode);      SaveConfigValueEx(L"DLSSNR_Proxy", L"EnlargementMode", buf);
-    swprintf_s(buf, L"%.2f", v.transfer);          SaveConfigValueEx(L"DLSSNR_Proxy", L"TransferStrength", buf);
-    swprintf_s(buf, L"%.2f", v.color);             SaveConfigValueEx(L"DLSSNR_Proxy", L"ColorStrength", buf);
-    swprintf_s(buf, L"%.2f", v.sharpness);         SaveConfigValueEx(L"DLSSNR_Proxy", L"Sharpness", buf);
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableHotkeys", v.enableHotkeys ? L"1" : L"0");
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableUi", v.enableUi ? L"1" : L"0");
-    swprintf_s(buf, L"%u", (uint32_t)v.uiLanguage); SaveConfigValueEx(L"DLSSNR_Proxy", L"UiLanguage", buf);
-    SaveConfigValueEx(L"Hotkeys", L"RequireCtrlAlt", v.requireCtrlAlt ? L"1" : L"0");
-    swprintf_s(buf, L"%d", v.keyToggleProxy); SaveConfigValueEx(L"Hotkeys", L"KeyToggleProxy", buf);
-    swprintf_s(buf, L"%d", v.keyToggleMode);  SaveConfigValueEx(L"Hotkeys", L"KeyToggleMode", buf);
-    swprintf_s(buf, L"%d", v.keyScaleUp);     SaveConfigValueEx(L"Hotkeys", L"KeyScaleUp", buf);
-    swprintf_s(buf, L"%d", v.keyScaleDown);   SaveConfigValueEx(L"Hotkeys", L"KeyScaleDown", buf);
-    swprintf_s(buf, L"%d", v.keyToggleUi);    SaveConfigValueEx(L"Hotkeys", L"KeyToggleUI", buf);
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", v.depthAware ? L"1" : L"0");
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableAlternatingFrames", v.vrnr ? L"1" : L"0");
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"VrnrAntiFlicker", v.vrnrAntiFlicker ? L"1" : L"0");
-    SaveConfigValueEx(L"DLSSNR_Proxy", L"EnableAnamorphic", v.anamorphic ? L"1" : L"0");
-    swprintf_s(buf, L"%.2f", v.scaleX);           SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScaleX", buf);
-    swprintf_s(buf, L"%.2f", v.scaleY);           SaveConfigValueEx(L"DLSSNR_Proxy", L"ResolutionScaleY", buf);
-    SaveConfigValueEx(L"DLSSNR_Settings", L"UseCustomSettings", v.useCustomNR ? L"1" : L"0");
-    swprintf_s(buf, L"%u", (uint32_t)v.nrStyle);  SaveConfigValueEx(L"DLSSNR_Settings", L"Style", buf);
-    swprintf_s(buf, L"%.2f", v.nrIntensity);      SaveConfigValueEx(L"DLSSNR_Settings", L"Intensity", buf);
-    swprintf_s(buf, L"%.2f", v.nrLocalStruct);    SaveConfigValueEx(L"DLSSNR_Settings", L"LocalStructureStrength", buf);
-    swprintf_s(buf, L"%.2f", v.nrLocalTone);      SaveConfigValueEx(L"DLSSNR_Settings", L"LocalToneStrength", buf);
-    swprintf_s(buf, L"%.2f", v.nrSkinStruct);     SaveConfigValueEx(L"DLSSNR_Settings", L"SkinStructureStrength", buf);
-    swprintf_s(buf, L"%u", v.nrAutoMask ? 1u : 0u); SaveConfigValueEx(L"DLSSNR_Settings", L"UseAutoMask", buf);
-    PushProxyToSharedMemory();
-    Log("[Proxy] Overlay UI committed settings to INI + shared memory");
-}
-
-static dlssnr_ui::PanelHooks g_uiHooks;
-static bool g_uiHooksRegistered = false;
-
-// Panel position persistence — backed by nvngx_dlssnr.ini ([DLSSNR_Proxy]
-// PanelX / PanelY). Screen coordinates of the panel's top-left corner.
-static bool UiLoadPanelPos(int& x, int& y, void*) {
-    if (g_iniPath[0] == L'\0') return false;
-    int dx = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelX", -1, g_iniPath);
-    int dy = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelY", -1, g_iniPath);
-    if (dx < 0 || dy < 0) return false;   // never saved (or dragged off-screen)
-    x = dx; y = dy;
-    return true;
-}
-static void UiSavePanelPos(int x, int y, void*) {
-    if (g_iniPath[0] == L'\0') return;
-    wchar_t b[24];
-    swprintf_s(b, L"%d", x);
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelX", b, g_iniPath);
-    swprintf_s(b, L"%d", y);
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelY", b, g_iniPath);
-}
-// Panel size persistence for the free-resize window ([DLSSNR_Proxy]
-// PanelW / PanelH, client pixels). No value saved yet -> load returns false.
-static bool UiLoadPanelSize(int& w, int& h, void*) {
-    if (g_iniPath[0] == L'\0') return false;
-    int pw = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelW", -1, g_iniPath);
-    int ph = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"PanelH", -1, g_iniPath);
-    if (pw <= 0 || ph <= 0) return false;
-    w = pw; h = ph;
-    return true;
-}
-static void UiSavePanelSize(int w, int h, void*) {
-    if (g_iniPath[0] == L'\0') return;
-    wchar_t b[24];
-    swprintf_s(b, L"%d", w);
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelW", b, g_iniPath);
-    swprintf_s(b, L"%d", h);
-    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"PanelH", b, g_iniPath);
-}
-
-static void EnsureUiHooksRegistered() {
-    if (g_uiHooksRegistered) return;
-    g_uiHooks.user = nullptr;
-    g_uiHooks.pull = UiPullConfig;
-    g_uiHooks.applyLive = UiApplyLive;
-    g_uiHooks.commit = UiCommitConfig;
-    g_uiHooks.loadPos = UiLoadPanelPos;
-    g_uiHooks.savePos = UiSavePanelPos;
-    g_uiHooks.loadSize = UiLoadPanelSize;
-    g_uiHooks.saveSize = UiSavePanelSize;
-    dlssnr_proxyui::OverlaySetHooks(g_uiHooks);
-    g_uiHooksRegistered = true;
-}
-
-// CheckConfigHotReload：每帧开头调用。共享内存 version 变化（console/管理器
-// 改了设置）→ 重读 INI + 采纳共享内存值 → 缩放类参数变化会触发重建 NGX 功能。
-// CheckHotkeys：每帧轮询热键（代理/模式/缩放/面板开关）。
 static void CheckConfigHotReload() {
     InitProxySharedMemory();
 
@@ -546,19 +261,6 @@ static void CheckConfigHotReload() {
                 g_transferStrength.store(g_proxySharedConfig->transferStrength);
                 g_colorStrength.store(g_proxySharedConfig->colorStrength);
                 g_sharpness.store(g_proxySharedConfig->sharpness);
-                g_enableHotkeys.store(g_proxySharedConfig->enableHotkeys != 0);
-                g_requireCtrlAlt.store(g_proxySharedConfig->requireCtrlAlt != 0);
-                g_keyToggleProxy.store(g_proxySharedConfig->keyToggleProxy);
-                g_keyToggleMode.store(g_proxySharedConfig->keyToggleMode);
-                g_keyScaleUp.store(g_proxySharedConfig->keyScaleUp);
-                g_keyScaleDown.store(g_proxySharedConfig->keyScaleDown);
-                g_enableUi.store(g_proxySharedConfig->enableUi != 0);
-                g_keyToggleUI.store(g_proxySharedConfig->keyToggleUi);
-                int newLang = (int)g_proxySharedConfig->uiLanguage;
-                if (newLang >= 0 && newLang < dlssnr_ui::L_COUNT) {
-                    g_uiLanguage.store(newLang);
-                    dlssnr_ui::SetLang(newLang);  // refresh overlay display immediately
-                }
                 g_enableHotkeys = (g_proxySharedConfig->enableHotkeys != 0);
                 g_requireCtrlAlt = (g_proxySharedConfig->requireCtrlAlt != 0);
                 g_keyToggleProxy = g_proxySharedConfig->keyToggleProxy;
@@ -568,7 +270,6 @@ static void CheckConfigHotReload() {
 
                 g_enableVrnr.store(g_proxySharedConfig->enableVrnr != 0);
                 g_enableDepthAware.store(g_proxySharedConfig->enableDepthAware != 0);
-                g_vrnrAntiFlicker.store(g_proxySharedConfig->vrnrAntiFlicker != 0);
                 g_nrStyle.store(g_proxySharedConfig->nrStyle);
                 g_nrIntensity.store(g_proxySharedConfig->nrIntensity);
                 g_nrLocalStructureStrength.store(g_proxySharedConfig->nrLocalStructureStrength);
@@ -595,29 +296,14 @@ static void CheckConfigHotReload() {
 }
 
 static void CheckHotkeys() {
+    if (!g_enableHotkeys) return;
+
     static ULONGLONG s_lastPress = 0;
     ULONGLONG now = GetTickCount64();
     if (now - s_lastPress < 250) return;
 
-    // UI overlay toggle: Ctrl+Alt+<KeyToggleUI>, independent of EnableHotkeys /
-    // RequireCtrlAlt so the panel can always be summoned while EnableUi is on.
-    if (g_enableUi.load()) {
-        bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
-        bool alt  = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
-        int  uiKey = g_keyToggleUI.load();
-        if (ctrl && alt && uiKey > 0 && (GetAsyncKeyState(uiKey) & 0x8000) != 0) {
-            s_lastPress = now;
-            EnsureUiHooksRegistered();
-            dlssnr_proxyui::OverlayToggle();
-            Log("[Proxy] Hotkey UI toggle pressed (Ctrl+Alt+F11)");
-            return;
-        }
-    }
-
-    if (!g_enableHotkeys.load()) return;
-
     bool modifiersOk = true;
-    if (g_requireCtrlAlt.load()) {
+    if (g_requireCtrlAlt) {
         bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
         bool alt  = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
         modifiersOk = (ctrl && alt);
@@ -625,7 +311,7 @@ static void CheckHotkeys() {
 
     if (modifiersOk) {
         float current = g_scale.load();
-        if ((GetAsyncKeyState(g_keyToggleProxy.load()) & 0x8000) != 0) {
+        if ((GetAsyncKeyState(g_keyToggleProxy) & 0x8000) != 0) {
             bool newState = !g_enableProxy.load();
             g_enableProxy.store(newState);
             wchar_t buf[16];
@@ -635,7 +321,7 @@ static void CheckHotkeys() {
             Log("[Proxy] Hotkey ToggleProxy: Proxy is now %s (synced to INI)", newState ? "ENABLED" : "DISABLED (Native Passthrough)");
             s_lastPress = now;
         }
-        else if ((GetAsyncKeyState(g_keyToggleMode.load()) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyToggleMode) & 0x8000) != 0) {
             uint32_t newMode = (g_enlargementMode.load() == 1) ? 0 : 1;
             g_enlargementMode.store(newMode);
             wchar_t buf[16];
@@ -645,7 +331,7 @@ static void CheckHotkeys() {
             Log("[Proxy] Hotkey ToggleMode: EnlargementMode changed to %s (synced to INI)", newMode == 1 ? "Matched Residual" : "Classic Bilinear");
             s_lastPress = now;
         }
-        else if ((GetAsyncKeyState(g_keyScaleUp.load()) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyScaleUp) & 0x8000) != 0) {
             float next = (float)(floor((current + 0.051f) * 20.0f) / 20.0f);
             if (next > 2.00f) next = 2.00f;
             if (next != current) {
@@ -658,7 +344,7 @@ static void CheckHotkeys() {
                 s_lastPress = now;
             }
         }
-        else if ((GetAsyncKeyState(g_keyScaleDown.load()) & 0x8000) != 0) {
+        else if ((GetAsyncKeyState(g_keyScaleDown) & 0x8000) != 0) {
             float next = (float)(floor((current - 0.049f) * 20.0f) / 20.0f);
             if (next < 0.25f) next = 0.25f;
             if (next != current) {
@@ -838,8 +524,6 @@ struct ResolveConstants {
     float    colorStrength;
     uint32_t isSkipFrame;
     uint32_t hasDepth;
-    float    vrnrRamp;    // 0.6.3 防闪烁：连续 skip 帧的 edit 强度坡道（1.0 = 满强度）
-    uint32_t vrnrAf;      // 0.6.3 防闪烁总开关（0 = 与 0.6.2 行为完全一致）
 };
 
 static ID3D12Device*             g_device = nullptr;
@@ -892,12 +576,6 @@ struct NrRetired {
 };
 static std::vector<NrRetired> g_retiredList;
 
-// ── NGX 功能生命周期管理 ────────────────────────────────────────────────────
-// ParkNrFeature：把真实 NGX feature 句柄挂进延迟回收列表（64 帧后 real_Release），
-//   给游戏留出切换到新 feature 的缓冲期。
-// ⚠️ 句柄一经 park 就【不再代表有效功能】——之后任何路径都不得拿它调 real_Evaluate
-//    （0.7.x 的 use-after-free 崩溃根因，见文件头「崩溃防线」）。
-// TickRetired：每帧倒数，到期的 feature / scratch 资源在这里真正 Release。
 static void ParkNrFeature(void*& feature) {
     if (!feature) return;
     NrRetired r;
@@ -971,9 +649,6 @@ static void ReleaseD3D12Pipeline() {
     g_device = nullptr;
 }
 
-// InitD3D12Pipeline：创建 compute 管线（根签名×2 + PSO×2 + 描述符堆）。
-// 描述符堆容量 = 64 帧 × 每帧槽位步长 8 + 余量 = 512；改 resolve 的 SRV/UAV
-// 数量时同步更新帧槽步长（s_frameSlot * 8）与堆容量。
 static bool InitD3D12Pipeline(ID3D12Device* device) {
     if (!device) return false;
     if (g_device != nullptr && g_device != device) {
@@ -1066,7 +741,7 @@ static bool InitD3D12Pipeline(ID3D12Device* device) {
         resolveParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         resolveParams[0].Constants.ShaderRegister = 0;
         resolveParams[0].Constants.RegisterSpace = 0;
-        resolveParams[0].Constants.Num32BitValues = 12;   // ResolveConstants（0.6.3 +vrnrRamp/vrnrAf）
+        resolveParams[0].Constants.Num32BitValues = 10;
         resolveParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
         resolveParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -1181,10 +856,6 @@ static ID3D12Resource* CreateScratchTexture(ID3D12Device* device, DXGI_FORMAT fo
     return res;
 }
 
-// ── NGX D3D12 导出入口（D3D12 系列不转发，全部由本文件实现拦截）────────────
-// Init_Ext / CreateFeature / EvaluateFeature / ReleaseFeature 四个是核心拦截点，
-// 其余导出（CUDA/D3D11 等）由 forwarders.h 的链接器指令直接转发到 _real.dll。
-// CUDA/DXGI 之外的失败只打日志，绝不让异常越出 __except 边界。
 extern "C" {
 
 __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_Init_Ext(
@@ -1197,7 +868,6 @@ __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_Init_Ext(
     std::lock_guard<std::recursive_mutex> lock(g_proxyMutex);
     EnsureRealModuleLoaded();
     LoadConfig();
-    EnsureUiHooksRegistered(); // make the Ctrl+Alt+F11 overlay panel available
 
     Log("[Proxy] NVSDK_NGX_D3D12_Init_Ext (AppId=0x%llX, Device=%p)", InApplicationId, InDevice);
     if (!real_InitExt) return -1;
@@ -1220,21 +890,6 @@ __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_CreateFeature(
     return real_Create(InCmdList, InFeatureId, InParameters, OutHandle);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// EvaluateFeatureInternal — 核心一帧流程（游戏每帧、每个 NGX 槽位调用一次）
-//
-//   [热更新] CheckConfigHotReload → [跳帧判定] VRNR 隔帧 →
-//   pass1 CS_Downsample（原生帧→colorSmall）→ 真实 NR（work 分辨率）→
-//   pass2 CS_Resolve（编辑量合成回 origOutput）
-//
-// 失败处理铁律（0.7.x 血案总结）：
-//   ① real_Create 失败 → 置 activeFeature=nullptr 后走「游戏句柄透传」
-//      real_Evaluate 是安全的【仅当该句柄未被 park】；创建失败分支里我们
-//      刚 park 了旧句柄，因此透传用的是 InFeatureHandle 本身，不要混淆。
-//   ② slot 资源缺失 / feature 不存在 → 直接透传 real_Evaluate。
-//   ③ SEH __except 兜底 → 透传，绝不让异常逃出 DLL（游戏会直接崩）。
-// 帧槽步长 8：0-1 downsample / 2-6 resolve(SRV×4+UAV)（详见 InitD3D12Pipeline）。
-// ─────────────────────────────────────────────────────────────────────────────
 static int EvaluateFeatureInternal(
     ID3D12GraphicsCommandList* InCmdList,
     const void* InFeatureHandle,
@@ -1715,25 +1370,6 @@ static int EvaluateFeatureInternal(
     bool isVrnrActive = g_enableProxy.load() && g_enableVrnr.load() && isScalingActive;
     bool isSkipFrame = (isVrnrActive && slot->hasEvaluatedOnce && ((s_evaluateFrameIndex % 2) == 1));
 
-    // 0.6.3 防闪烁（P0 时间坡道）：统计连续 skip 帧数，edit 强度按
-    // 100% → 90% → 72% → 55% 缓降（恢复推理帧自动回到 100%）。
-    // 关闭开关时 ramp 恒为 1.0，行为与 0.6.2 完全一致。
-    static int s_vrnrSkipRun = 0;
-    if (isVrnrActive) {
-        if (s_passCountThisFrame == 0) {
-            if (isSkipFrame) ++s_vrnrSkipRun;
-            else             s_vrnrSkipRun = 0;
-        }
-    } else {
-        s_vrnrSkipRun = 0;
-    }
-    float vrnrRamp = 1.0f;
-    if (g_vrnrAntiFlicker.load() && s_vrnrSkipRun >= 1) {
-        if      (s_vrnrSkipRun == 1) vrnrRamp = 0.90f;
-        else if (s_vrnrSkipRun == 2) vrnrRamp = 0.72f;
-        else                         vrnrRamp = 0.55f;
-    }
-
     // Update live telemetry for companion UI
     if (g_proxySharedConfig && g_proxySharedConfig->magic == DLSSNR_MAGIC) {
         g_proxySharedConfig->debugNativeW = nativeW;
@@ -1996,10 +1632,8 @@ static int EvaluateFeatureInternal(
     resConstants.colorStrength = g_colorStrength.load();
     resConstants.isSkipFrame = isSkipFrame ? 1 : 0;
     resConstants.hasDepth = hasValidDepth ? 1 : 0;
-    resConstants.vrnrRamp = vrnrRamp;
-    resConstants.vrnrAf = g_vrnrAntiFlicker.load() ? 1 : 0;
 
-    InCmdList->SetComputeRoot32BitConstants(0, 12, &resConstants, 0);
+    InCmdList->SetComputeRoot32BitConstants(0, 10, &resConstants, 0);
     InCmdList->SetComputeRootDescriptorTable(1, gpuHandleResolve);
     InCmdList->SetPipelineState(g_psoResolve);
     InCmdList->Dispatch((nativeW + 7) / 8, (nativeH + 7) / 8, 1);
@@ -2026,8 +1660,6 @@ static int EvaluateFeatureInternal(
     return result;
 }
 
-// EvaluateFeature 导出：包一层 SEH __except 兜底，实际逻辑在 EvaluateFeatureInternal。
-// 兜底分支同样只做透传——任何情况下不能让 C++/SEH 异常穿越 DLL 边界。
 __declspec(dllexport) int __cdecl NVSDK_NGX_D3D12_EvaluateFeature(
     ID3D12GraphicsCommandList* InCmdList,
     const void* InFeatureHandle,
@@ -2085,7 +1717,6 @@ BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved) {
     if (fdwReason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hinstDLL);
     } else if (fdwReason == DLL_PROCESS_DETACH && !lpvReserved) {
-        dlssnr_proxyui::OverlayShutdown(); // stop UI thread + destroy panel window first
         ReleaseD3D12Pipeline();
         for (size_t i = 0; i < MAX_FEATURE_SLOTS; ++i) {
             if (g_slots[i].inUse) {

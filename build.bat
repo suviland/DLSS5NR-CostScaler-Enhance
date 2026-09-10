@@ -6,8 +6,14 @@ REM ---------------------------------------------------------------------------
 REM Build DLSS5-NR-Boost. All final outputs go to build\<VERSION>\ and carry
 REM an embedded VERSIONINFO resource (app_version.rc). Keep VERSION in sync
 REM with the CHANGELOG.md and app_version.rc.
+REM
+REM ⚠️ AI/维护者须知（详见 AI_ASSISTANT_GUIDE.md）：
+REM   1. 发新版本前必须先备份老版本源码 + build 到 backup\<老版本>\；
+REM   2. 版本号改两处：本文件 VERSION 与 app_version.rc（共 5 个字段）；
+REM   3. 步骤 1 由 fxc 从 shaders.hlsl 生成 *_Shader.h——shaders.hlsl 里的
+REM      cbuffer 布局必须与 proxy_main.cpp 的常量结构体严格一致。
 REM ---------------------------------------------------------------------------
-set VERSION=0.7.0
+set VERSION=0.6.3
 set OUTDIR=build\%VERSION%
 set OBJDIR=build\obj
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
@@ -46,37 +52,36 @@ if %errorlevel% neq 0 (
     )
 )
 
-echo [1/8] Compiling HLSL shaders...
+echo [1/7] Compiling HLSL shaders...
 %FXC% /nologo /T cs_5_0 /E CS_Downsample /Fh Downsample_Shader.h /Vn g_DownsampleShader shaders.hlsl
 if errorlevel 1 (
     echo [WARNING] Shader compilation failed or fxc not found, using precompiled header if present.
 ) else (
     %FXC% /nologo /T cs_5_0 /E CS_Resolve /Fh Resolve_Shader.h /Vn g_ResolveShader shaders.hlsl
-    %FXC% /nologo /T cs_5_0 /E CS_Motion /Fh Motion_Shader.h /Vn g_MotionShader shaders.hlsl
 )
 
-echo [2/8] Compiling version resource...
+echo [2/7] Compiling version resource...
 rc.exe /nologo /fo app_version.res app_version.rc
 if errorlevel 1 (
     echo [ERROR] Version resource compile failed.
     exit /b 1
 )
 
-echo [3/8] Compiling proxy_main.cpp...
+echo [3/7] Compiling proxy_main.cpp...
 cl.exe /nologo /O2 /Oi /GL /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "UNICODE" /D "_UNICODE" /Fo"%OBJDIR%\\" /c proxy_main.cpp
 if errorlevel 1 (
     echo [ERROR] Compilation failed.
     exit /b 1
 )
 
-echo [4/8] Compiling proxy_ui.cpp...
+echo [4/7] Compiling proxy_ui.cpp...
 cl.exe /nologo /O2 /Oi /GL /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "_WINDOWS" /D "_USRDLL" /D "UNICODE" /D "_UNICODE" /Fo"%OBJDIR%\\" /c proxy_ui.cpp
 if errorlevel 1 (
     echo [ERROR] Compilation failed.
     exit /b 1
 )
 
-echo [5/8] Linking nvngx_dlssnr.dll...
+echo [5/7] Linking nvngx_dlssnr.dll...
 link.exe /nologo /DLL /OUT:"%OUTDIR%\nvngx_dlssnr.dll" "%OBJDIR%\proxy_main.obj" "%OBJDIR%\proxy_ui.obj" app_version.res d3d12.lib dxgi.lib kernel32.lib user32.lib gdi32.lib /OPT:REF /OPT:ICF /LTCG
 
 if exist "%OUTDIR%\nvngx_dlssnr.dll" (
@@ -86,7 +91,7 @@ if exist "%OUTDIR%\nvngx_dlssnr.dll" (
     exit /b 1
 )
 
-echo [6/8] Building dlssnr_console.exe...
+echo [6/7] Building dlssnr_console.exe...
 cl.exe /nologo /O2 /MT /EHsc /utf-8 /std:c++17 /D "NDEBUG" /D "UNICODE" /D "_UNICODE" /Fo"%OBJDIR%\\" dlssnr_console.cpp app_version.res /link /SUBSYSTEM:WINDOWS user32.lib gdi32.lib /OUT:"%OUTDIR%\dlssnr_console.exe"
 if errorlevel 1 (
     echo [ERROR] Console EXE build failed.
@@ -100,7 +105,7 @@ if exist "%OUTDIR%\dlssnr_console.exe" (
     exit /b 1
 )
 
-echo [7/8] Compiling resources and DLSS5-NR-Boost-manager.exe...
+echo [7/7] Compiling resources and DLSS5-NR-Boost-manager.exe...
 rc.exe /nologo app.rc
 if errorlevel 1 (
     echo [ERROR] Resource compile failed.

@@ -5,8 +5,8 @@
 #include <windows.h>
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION    0,7,0,0
- PRODUCTVERSION 0,7,0,0
+ FILEVERSION    0,6,3,0
+ PRODUCTVERSION 0,6,3,0
  FILEFLAGSMASK  0x3fL
  FILEFLAGS      0x0L
  FILEOS         0x40004L   // VOS_NT_WINDOWS32
@@ -18,12 +18,12 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "CompanyName",    "DLSS5NR-CostScaler Project"
-            VALUE "FileDescription","DLSS5NR-CostScaler 0.7.0"
-            VALUE "FileVersion",    "0.7.0"
+            VALUE "FileDescription","DLSS5NR-CostScaler 0.6.3"
+            VALUE "FileVersion",    "0.6.3"
             VALUE "InternalName",   "dlssnr"
             VALUE "LegalCopyright", "MIT License"
             VALUE "ProductName",    "DLSS5NR-CostScaler"
-            VALUE "ProductVersion", "0.7.0"
+            VALUE "ProductVersion", "0.6.3"
         END
     END
     BLOCK "VarFileInfo"

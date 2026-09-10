@@ -2,6 +2,21 @@
 // Languages: zh (default) / en / ru / ko. Switchable from the header bar button.
 // Used by both the in-game overlay panel (proxy DLL) and the standalone console EXE.
 // Header-only: compile into exactly one translation unit per module.
+//
+// ── 维护速查（CN fork）────────────────────────────────────────────────────────
+//  · Field 枚举（F_*）是全 UI 的字段 ID：一行 UI = { RowKind, Field, 高度 }。
+//    新增设置项的完整路径：
+//      ① enum Field 加 ID（注意顺序决定 kMap 文案索引，改错文案会串行）
+//      ② kMap[] 加四语言文案（zh/en/ru/ko 顺序，勿乱插）
+//      ③ BuildLayout() 对应页面 push 一行；④ GetBool/SetBool/GetFloat…
+//        加取值；⑤ proxy_main.cpp 的 UiPull/ApplyField/CommitAll 桥接；
+//      ⑥ dlssnr_shared.h 加字段（追加到末尾）+ console/manager 同步。
+//  · IniValue{}（struct）字段名 = ini 键名的 camelCase 形式，对标 dlssnr_shared.h。
+//  · RowKind：RK_TOGGLE 开关 / RK_SLIDER 滑条 / RK_CHIPS 缩放芯片行 / RK_SEG3
+//    三段选择 / RK_KEY 热键 …；新增行型要同时写 painter 和点击命中两处。
+//  · 面板字体：像素字体 BlitText（四语言位图字库）；不要引入系统字体依赖，
+//    覆盖面板运行在游戏 D3D12 线程上，务必保持无阻塞、无堆大分配。
+// ─────────────────────────────────────────────────────────────────────────────
 #pragma once
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -71,11 +86,10 @@ enum Field {
     F_ENABLE_HOTKEYS, F_REQUIRE_CTRLALT, F_ENABLE_UI,
     F_KEY_TOGGLE_PROXY, F_KEY_TOGGLE_MODE, F_KEY_SCALEUP, F_KEY_SCALEDOWN, F_KEY_TOGGLEUI,
     // v0.6.0 upstream features
-    F_DEPTH_AWARE, F_VRNR,
+    F_DEPTH_AWARE, F_VRNR, F_VRNR_AF,
     F_ANAMORPHIC, F_SCALE_X, F_SCALE_Y,
     F_USE_CUSTOM_NR, F_NR_STYLE, F_NR_INTENSITY, F_NR_LOCAL_STRUCT, F_NR_LOCAL_TONE,
     F_NR_SKIN_STRUCT, F_NR_AUTO_MASK,
-    F_VRNR_BLEND, F_VRNR_SCHED,
     F_COUNT
 };
 
@@ -97,9 +111,8 @@ struct UiValues {
     int    uiLanguage      = L_ZH;   // dlssnr_ui::Lang: 0=zh 1=en 2=ru 3=ko
     // v0.6.0 upstream features
     bool   depthAware      = true;   // EnableDepthAwareResolve
-    int    vrnrInterval    = 1;      // 1 = every frame (VRNR off), 2, 3
-    bool   vrnrBlend       = true;   // Plan A: motion-adaptive blend on skipped frames
-    bool   vrnrSched       = false;  // Plan D: adaptive scheduling while moving
+    bool   vrnr            = false;  // EnableAlternatingFrames
+    bool   vrnrAntiFlicker = true;   // VrnrAntiFlicker (0.6.3 CN fork)
     bool   anamorphic      = false;  // EnableAnamorphic
     float  scaleX          = 0.65f;  // 0.25 .. 2.00
     float  scaleY          = 0.85f;  // 0.25 .. 2.00
@@ -119,8 +132,7 @@ struct UiValues {
                keyToggleMode == o.keyToggleMode && keyScaleUp == o.keyScaleUp &&
                keyScaleDown == o.keyScaleDown && keyToggleUi == o.keyToggleUi &&
                uiLanguage == o.uiLanguage &&
-               depthAware == o.depthAware && vrnrInterval == o.vrnrInterval &&
-               vrnrBlend == o.vrnrBlend && vrnrSched == o.vrnrSched &&
+               depthAware == o.depthAware && vrnr == o.vrnr && vrnrAntiFlicker == o.vrnrAntiFlicker &&
                anamorphic == o.anamorphic && scaleX == o.scaleX && scaleY == o.scaleY &&
                useCustomNR == o.useCustomNR && nrStyle == o.nrStyle &&
                nrIntensity == o.nrIntensity && nrLocalStruct == o.nrLocalStruct &&
@@ -315,7 +327,7 @@ struct Fonts {
 // ============================================================================
 // Row model + bilingual labels
 // ============================================================================
-enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_SEG3, RK_KEY, RK_FOOTER, RK_LINK, RK_VCHIPS, RK_LABEL };
+enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_SEG3, RK_KEY, RK_FOOTER, RK_LINK };
 
 // Note: RowText4 is defined at the top of this file (line ~43) for LANG_PICK.
 
@@ -336,8 +348,8 @@ static const RowText4* RowTextFor(Field f) {
         { L"\u964d\u4f4e\u7f29\u653e",                                               L"Scale Down",                                L"\u0423\u043c\u0435\u043d\u044c\u0448\u0438\u0442\u044c \u043c\u0430\u0441\u0448\u0442\u0430\u0431", L"\ube44\uc728 \ub0ae\ucd94\uae30" },                     // F_KEY_SCALEDOWN
         { L"\u5f00\u5173\u9762\u677f",                                               L"Toggle Panel",                              L"\u041f\u0435\u0440\u0435\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u043f\u0430\u043d\u0435\u043b\u044c", L"\ud328\ub110 \ud1a0\uae00" },   // F_KEY_TOGGLEUI
         { L"深度感知轮廓保持",                                                   L"Depth-Aware Resolve",                       L"Учёт глубины",                         L"깊이 인식 리졸브" },        // F_DEPTH_AWARE
-        { L"隔帧推理间隔",                                                   L"Frame Interval",                            L"Интервал кадров",                      L"프레임 간격" },             // F_VRNR (chips)
-        { L"隔帧推理间隔",                                                   L"Frame Interval",                            L"Интервал кадров",                      L"프레임 간격" },             // F_VRNR (chips)
+        { L"隔帧推理（实验）",                                                   L"Alternate Frames (Exp.)",                   L"Чередование кадров",                   L"교차 프레임 (실험)" },      // F_VRNR
+        { L"跳帧防闪烁",                                                         L"Skip-Frame Anti-Flicker",                   L"Анти-мерцание",                        L"깜빡임 방지" },             // F_VRNR_AF
         { L"非均匀缩放（实验）",                                                 L"Anamorphic Scaling (Exp.)",                 L"Анаморфный масштаб",                   L"비대칭 스케일 (실험)" },    // F_ANAMORPHIC
         { L"水平缩放",                                                           L"Horizontal Scale",                          L"Горизонтальный масштаб",               L"가로 비율" },               // F_SCALE_X
         { L"垂直缩放",                                                           L"Vertical Scale",                            L"Вертикальный масштаб",                 L"세로 비율" },               // F_SCALE_Y
@@ -348,8 +360,6 @@ static const RowText4* RowTextFor(Field f) {
         { L"局部色调强度",                                                       L"Local Tone Strength",                       L"Локальный тон",                        L"로컬 톤 강도" },            // F_NR_LOCAL_TONE
         { L"皮肤结构强度",                                                       L"Skin Structure Strength",                   L"Структура кожи",                       L"피부 구조 강도" },          // F_NR_SKIN_STRUCT
         { L"自动遮罩",                                                           L"Auto Mask",                                 L"Автомаска",                            L"자동 마스크" },             // F_NR_AUTO_MASK
-        { L"跳帧混合",                                                           L"Skip-Frame Blend",                          L"Смешивание пропусков",                 L"스킵 프레임 블렌딩" },      // F_VRNR_BLEND
-        { L"动态跳帧",                                                           L"Adaptive Skip",                             L"Адаптивный пропуск",                   L"적응형 스킵" },             // F_VRNR_SCHED
     };
     int i = (int)f;
     if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return nullptr;
@@ -394,13 +404,6 @@ inline const RowText4 kAutoLabel  = { L"\u81ea\u52a8", L"Auto", L"\u0410\u0432\u
 // Presets for the scale chips row
 struct ChipDef { float v; };
 static const ChipDef kScaleChips[] = { {2.00f}, {1.50f}, {1.00f}, {0.85f}, {0.80f}, {0.75f}, {0.67f}, {0.50f} };
-
-// Presets for the VRNR interval chips row (1 = every frame / off)
-static const RowText4 kVChip1 = { L"每帧推理", L"Every Frame", L"Каждый кадр", L"매 프레임" };
-static const RowText4 kVChip2 = { L"每2帧",    L"Every 2nd",   L"Через 2",       L"2프레임" };
-static const RowText4 kVChip3 = { L"每3帧",    L"Every 3rd",   L"Через 3",       L"3프레임" };
-struct VChipDef { int v; const RowText4* txt; };
-static const VChipDef kVrnrChips[] = { {1, &kVChip1}, {2, &kVChip2}, {3, &kVChip3} };
 
 // ---------------------------------------------------------------------------
 // Software cursor (in-game overlay). When the proxy hijacks the mouse via raw
@@ -491,10 +494,8 @@ inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, 
         // ── Page 2: 高级 Advanced (v0.6.0) ---------------------------------
         push(RK_SECTION, S_ADV, 24);
         push(RK_TOGGLE, F_DEPTH_AWARE, 32);
-        push(RK_LABEL, F_VRNR, 20);
-        push(RK_VCHIPS, F_VRNR, 30);
-        push(RK_TOGGLE, F_VRNR_BLEND, 32);
-        push(RK_TOGGLE, F_VRNR_SCHED, 32);
+        push(RK_TOGGLE, F_VRNR, 32);
+        push(RK_TOGGLE, F_VRNR_AF, 32);
         push(RK_TOGGLE, F_ANAMORPHIC, 32);
         push(RK_SLIDER, F_SCALE_X, 46);
         push(RK_SLIDER, F_SCALE_Y, 46);
@@ -566,7 +567,7 @@ inline void FieldRange(Field f, float& lo, float& hi) {
 }
 inline bool FieldIsBool(Field f) {
     return f == F_ENABLE_PROXY || f == F_ENABLE_HOTKEYS || f == F_REQUIRE_CTRLALT || f == F_ENABLE_UI ||
-           f == F_DEPTH_AWARE || f == F_VRNR_BLEND || f == F_VRNR_SCHED || f == F_ANAMORPHIC ||
+           f == F_DEPTH_AWARE || f == F_VRNR || f == F_VRNR_AF || f == F_ANAMORPHIC ||
            f == F_USE_CUSTOM_NR || f == F_NR_AUTO_MASK;
 }
 inline bool FieldIsPercent(Field f) {
@@ -660,8 +661,8 @@ inline bool GetBool(const UiValues& v, Field f) {
     case F_REQUIRE_CTRLALT: return v.requireCtrlAlt;
     case F_ENABLE_UI: return v.enableUi;
     case F_DEPTH_AWARE: return v.depthAware;
-    case F_VRNR_BLEND: return v.vrnrBlend;
-    case F_VRNR_SCHED: return v.vrnrSched;
+    case F_VRNR: return v.vrnr;
+    case F_VRNR_AF: return v.vrnrAntiFlicker;
     case F_ANAMORPHIC: return v.anamorphic;
     case F_USE_CUSTOM_NR: return v.useCustomNR;
     case F_NR_AUTO_MASK: return v.nrAutoMask;
@@ -675,8 +676,8 @@ inline void SetBool(UiValues& v, Field f, bool b) {
     case F_REQUIRE_CTRLALT: v.requireCtrlAlt = b; break;
     case F_ENABLE_UI: v.enableUi = b; break;
     case F_DEPTH_AWARE: v.depthAware = b; break;
-    case F_VRNR_BLEND: v.vrnrBlend = b; break;
-    case F_VRNR_SCHED: v.vrnrSched = b; break;
+    case F_VRNR: v.vrnr = b; break;
+    case F_VRNR_AF: v.vrnrAntiFlicker = b; break;
     case F_ANAMORPHIC: v.anamorphic = b; break;
     case F_USE_CUSTOM_NR: v.useCustomNR = b; break;
     case F_NR_AUTO_MASK: v.nrAutoMask = b; break;
@@ -862,28 +863,6 @@ inline void DrawChipsRow(HDC dc, const RECT& rc, float scale, const Fonts& f, co
         BlitText(dc, x, cy, cw, 24, buf, on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
-// Small dim caption row (used above the VRNR interval chips)
-inline void DrawLabelRow(HDC dc, const RECT& rc, Field field, const Fonts& f, const Theme& t) {
-    const RowText4* rt = RowTextFor(field);
-    BlitLabel(dc, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
-              LANG_PICK(*rt), t.dim, f.sub);
-}
-// VRNR interval chips: [每帧推理] [每2帧] [每3帧]
-inline void DrawVChipsRow(HDC dc, const RECT& rc, int interval, const Fonts& f, const Theme& t) {
-    const int n = (int)(sizeof(kVrnrChips) / sizeof(kVrnrChips[0]));
-    int gap = 6, area = rc.right - rc.left;
-    int cw = (area - gap * (n - 1)) / n;
-    int cy = rc.top + (rc.bottom - rc.top - 24) / 2;
-    for (int i = 0; i < n; ++i) {
-        int x = rc.left + i * (cw + gap);
-        int v = kVrnrChips[i].v;
-        bool on = (interval == v);
-        if (on) BlitRound(dc, x, cy, cw, 24, 12, t.accent);
-        else { BlitRound(dc, x, cy, cw, 24, 12, t.strip); BlitFrame(dc, x, cy, cw - 1, 23, 12, t.line); }
-        BlitText(dc, x, cy, cw, 24, LANG_PICK(*kVrnrChips[i].txt),
-                 on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    }
-}
 inline void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const Theme& t) {    int gap = 8;
     int bw = (rc.right - rc.left - gap) / 2;
     auto seg = [&](int x0, bool active, const RowText4& txt) {
@@ -1063,8 +1042,6 @@ inline void Panel::Paint(HWND hwnd) {
         case RK_CHIPS:    DrawChipsRow(mem, it.rc, cur.scale, fonts, t); break;
         case RK_SEG:      DrawSegRow(mem, it.rc, cur.mode, fonts, t); break;
         case RK_SEG3:     DrawSeg3Row(mem, it.rc, cur.nrStyle, fonts, t); break;
-        case RK_VCHIPS:   DrawVChipsRow(mem, it.rc, cur.vrnrInterval, fonts, t); break;
-        case RK_LABEL:    DrawLabelRow(mem, it.rc, (Field)it.field, fonts, t); break;
         case RK_KEY:      DrawKeyRow(mem, it.rc, (Field)it.field, GetKey(cur, (Field)it.field), cur.requireCtrlAlt, hov, (capIdx == i), fonts, t); break;
         case RK_FOOTER:   DrawFooterRow(mem, it.rc, fonts, t, dirty, now, flashAt, footer); break;
         case RK_LINK:     DrawLinkRow(mem, it.rc, fonts, t, hov); break;
@@ -1277,23 +1254,6 @@ inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
             if (rel >= x0 && rel < x0 + bw) { sel = i; break; }
         }
         if (sel >= 0) { cur.nrStyle = sel; SetDirty(F_NR_STYLE, now, hooks); }
-        break;
-    }
-    case RK_VCHIPS: {
-        int areaW = it.rc.right - it.rc.left;
-        int gap = 6, n = (int)(sizeof(kVrnrChips) / sizeof(kVrnrChips[0]));
-        int cw = (areaW - gap * (n - 1)) / n;
-        int pos = x - it.rc.left;
-        if (pos >= 0) {
-            int c = pos / (cw + gap);
-            if (c >= 0 && c < n) {
-                int inside = pos - c * (cw + gap);
-                if (inside <= cw) {
-                    cur.vrnrInterval = kVrnrChips[c].v;
-                    SetDirty(F_VRNR, now, hooks);
-                }
-            }
-        }
         break;
     }
     case RK_KEY: {

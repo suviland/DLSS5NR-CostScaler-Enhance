@@ -1,19 +1,3 @@
-// ================================================================================================
-// dlssnr_shared.h — 三端共享内存协议（唯一事实来源）
-// ================================================================================================
-// 使用方：proxy_main.cpp（游戏内，读端 + INI 兜底）、dlssnr_console.cpp、
-//         dlssnr_manager.cpp（两端均为写端）。命名管道式共享内存
-//         Local\DLSSNR_Config_Shared_v1，写入方递增 version 触发读端热更新。
-//
-// ⚠️ 修改本结构体的规则：
-//   1. 只允许在结构体【末尾】追加字段（共享内存按二进制布局映射，改中间字段
-//      = 三端版本错位时读到垃圾数据）。padding 保持 4 字节对齐。
-//   2. 任何字段增删必须同步四处：proxy_main.cpp 轮询/推送、proxy_ui.h 的
-//      UiValues 桥接、dlssnr_console.cpp 的 LoadIni/SaveIni/PushShared/
-//      AdoptFromShared/ClampAll、dlssnr_manager.cpp 的 PCfg + 调试页。
-//   3. ini 键名与字段一一对应，CHANGELOG 记录新键。
-// ================================================================================================
-
 #pragma once
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -58,11 +42,6 @@ struct DlssnrSharedConfig {
     uint32_t nrUseAutoMask;            // 0 = Off, 1 = On
     uint32_t useCustomNR;              // 0 = Passthrough caller's NR params, 1 = Override with proxy values
 
-    // Overlay panel & UI sync (CN fork)
-    uint32_t enableUi;                 // 0 = Off, 1 = On
-    uint32_t keyToggleUi;              // VK code
-    uint32_t uiLanguage;               // 0 zh / 1 EN / 2 RU / 3 ko
-
     // Telemetry & Diagnostics
     uint32_t debugNativeW;
     uint32_t debugNativeH;
@@ -77,10 +56,6 @@ struct DlssnrSharedConfig {
     uint32_t debugMvH;
     uint32_t debugActiveSlot;
     uint32_t debugVrnrSkippedThisFrame;// 1 if real_Evaluate was skipped this frame
-
-    // CN fork 0.6.3: VRNR anti-flicker (temporal ramp + spatial-smooth weight
-    // + symmetric highlight guard on skip frames). 0 = exact 0.6.2 behavior.
-    uint32_t vrnrAntiFlicker;          // 0 = Off, 1 = On (default)
 };
 #pragma pack(pop)
 

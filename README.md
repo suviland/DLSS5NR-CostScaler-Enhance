@@ -17,19 +17,11 @@ This repository is an enhanced fork of [xenmods/DLSSNR-Cost-Scaler](https://gith
 | Tuning | Manual ini edits + game restart | **In-game overlay / console / manager — changes apply instantly** |
 | Multi-client sync | None | Panel ⇄ console ⇄ shared memory ⇄ proxy, millisecond-level |
 | Install / uninstall | Manual rename & copy | **Manager recursively scans your game library; one-click install / uninstall / restore** |
-| VRNR frame skipping | Fixed alternate frames | **Adjustable interval (every 1/2/3 frames) + skip-frame blending + adaptive scheduling** |
+| VRNR frame skipping | Fixed alternate frames | **Manager / panel visual switch** |
 | UI | — | M3E-style, light/dark themes, zh / EN / RU / 한 |
 | Safety | — | SEH crash shield; shader faults never take the game down |
 
 ## 🆕 What's new
-
-### VRNR 2.0: adjustable interval + motion-adaptive denoising (unique to this fork)
-
-Skipping frames saves GPU time, but "NR frames look clean while skipped frames look dirty". This fork ships a complete answer — all three switches live in the panel:
-
-- **Adjustable inference interval** (`VrnrInterval`): every frame / every 2nd / every 3rd;
-- **Skip-frame blending** (`VrnrBlend`): downsampling still runs on skipped frames; the resolve shader blends per-pixel between the raw native pixel and a low-pass of the current frame based on the **per-pixel motion-vector magnitude** — static areas stay razor sharp, moving areas stop flickering with noise;
-- **Adaptive scheduling** (`VrnrAdaptiveSkip`): a built-in MV motion-reduction pass (GPU reduction + lagged readback) forces per-frame NR while the scene moves, and only skips frames when the scene is static — in menus the NR almost stops spinning.
 
 ### Three live, synchronized tuning surfaces
 
@@ -63,7 +55,7 @@ A standalone proxy DLL and companion toolset for NVIDIA DLSS-NR (DirectX 12) tha
 
 ## Artifacts
 
-Build outputs land in `build\<version>\` (currently `build/0.7.0/`) with embedded version info:
+Build outputs land in `build\<version>\` (currently `build/0.6.3/`) with embedded version info:
 
 | File | Purpose |
 | --- | --- |
@@ -109,9 +101,8 @@ TransferStrength = 1.00  ; residual transfer strength (0 ~ 2)
 ColorStrength = 1.00     ; color strength (0 ~ 1)
 Sharpness = 0.20         ; RCAS sharpening (0 ~ 1)
 EnableDepthAwareResolve = 1 ; depth-aware silhouette preservation
-VrnrInterval = 1         ; NR interval: 1 every frame (off) / 2 / 3
-VrnrBlend = 1            ; skip-frame blend (per-pixel MV weighting)
-VrnrAdaptiveSkip = 0     ; adaptive scheduling (per-frame NR while moving)
+EnableAlternatingFrames = 0 ; alternating-frame VRNR (experimental, off by default)
+VrnrAntiFlicker = 1        ; skip-frame anti-flicker (0.6.3, on by default; off = exact 0.6.2 behavior)
 EnableHotkeys = 1        ; in-game hotkey master switch
 EnableUi = 1             ; overlay panel master switch
 UiLanguage = 0           ; panel language: 0 zh / 1 EN / 2 RU / 3 한
@@ -138,7 +129,7 @@ KeyScaleDown = 34        ; scale down
 KeyToggleUI = 123        ; toggle panel (default F12)
 ```
 
-> Every setting above is editable in the manager's **Panel debug** page or the in-game panel, auto-saved on change. `EnableAlternatingFrames` is a legacy key derived from `VrnrInterval > 1`.
+> Every setting above is editable in the manager's **Panel debug** page or the in-game panel, auto-saved on change.
 
 ---
 
@@ -160,7 +151,7 @@ Runs everything: HLSL shader compilation (fxc) → version resource → proxy DL
 
 - **Game in Program Files?** Run the manager as administrator, or install manually.
 - **Panel doesn't receive the mouse?** The panel uses an observe-only low-level mouse hook and never competes with the game for input; if an anti-cheat blocks it, please report.
-- **VRNR — is it worth it?** With **skip-frame blending + adaptive scheduling** enabled it is far better than bare frame skipping: static scenes are near-identical, and heavy motion automatically falls back to per-frame NR. If you still notice noise pulsing, keep `VrnrInterval = 1`.
+- **Is alternating-frame VRNR worth it?** Camera pans can show 30Hz judder and ray-traced scenes may flicker — keep it off by default for the smoothest experience.
 - **`DXGI_ERROR_DEVICE_REMOVED` in the log?** That's a GPU driver reset (TDR), unrelated to the panel (it never touches the game's D3D device). Check overclocks / drivers.
 
 ## Acknowledgments & License

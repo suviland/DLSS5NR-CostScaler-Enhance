@@ -1,19 +1,6 @@
 // ================================================================================================
 // DLSS-NR Proxy Shaders: Area-Weighted Downsample + High-Frequency Matched Residual Resolve
 // ================================================================================================
-// 本文件包含两个 compute shader（由 build.bat 用 fxc 编译成 *_Shader.h 内嵌进 DLL）：
-//
-//   CS_Downsample : 原生帧 → work 分辨率低分辨率输入（TMU 双线性，一步到位）。
-//   CS_Resolve    : 合成输出。Mode 0 = 双线性直接放大；Mode 1 = 「编辑量」模式：
-//                   edit = outputSmall - colorSmall（NR 网络学到的去噪/增强差值），
-//                   经锐化/强度缩放后叠加回原生帧。isSkipFrame（VRNR 隔帧）时按
-//                   亮度差把陈旧编辑量淡出，运动处自然回落到干净原生像素。
-//
-// 常量块与 proxy_main.cpp 的 ResolveConstants/DownsampleConstants 严格对应，
-// 改任何一边必须同步另一边（字段顺序 = cbuffer 布局）。
-// ⚠️ 教训：曾在此加过 CS_Motion / 运动矢量混合（VRNR 2.0），因显存与稳定性问题
-//    已回退；重做类似功能前先读 AI_ASSISTANT_GUIDE.md 铁律 2。
-// ================================================================================================
 
 // --- DOWNSAMPLE SHADER ---
 cbuffer DownConstants : register(b0)
@@ -53,8 +40,6 @@ cbuffer ResolveConstants : register(b0)
     float gColorStrength;
     uint  gIsSkipFrame;
     uint  gHasDepth;
-    float gVrnrRamp;   // 0.6.3 防闪烁 P0：连续 skip 帧的 edit 强度坡道（1.0 = 满强度）
-    uint  gVrnrAf;     // 0.6.3 防闪烁总开关（0 = 与 0.6.2 行为完全一致）
 };
 
 Texture2D<float4>   gSmallInput    : register(t0); // Downsampled model input (g_colorSmall)
@@ -108,28 +93,6 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
             float lumaNative = dot(max(original, 0.0), kLuma);
             float diff = abs(lumaIn - lumaNative);
             float weight = saturate(1.0 - (diff * 2.0) / (lumaIn + lumaNative + 0.05));
-
-            // 0.6.3 防闪烁（P1 空间平滑）：亮度差改用 3x3 邻域平均值，
-            // 原生噪点不再逐帧驱动权重抖动（呼吸感根源）。
-            if (gVrnrAf != 0)
-            {
-                float2 pxAf = 1.0 / float2(gNativeWidth, gNativeHeight);
-                float3 iE = gSmallInput.SampleLevel(gLinear, uv + float2( pxAf.x, 0), 0).rgb;
-                float3 iW = gSmallInput.SampleLevel(gLinear, uv + float2(-pxAf.x, 0), 0).rgb;
-                float3 iS = gSmallInput.SampleLevel(gLinear, uv + float2(0,  pxAf.y), 0).rgb;
-                float3 iN = gSmallInput.SampleLevel(gLinear, uv + float2(0, -pxAf.y), 0).rgb;
-                float3 inAvg  = (inSample + iE + iW + iS + iN) * 0.2;
-                float3 natAvg = (original
-                    + s_nativeTile[tid.y + 1][tid.x + 2] + s_nativeTile[tid.y + 1][tid.x + 0]
-                    + s_nativeTile[tid.y + 2][tid.x + 1] + s_nativeTile[tid.y + 0][tid.x + 1]) * 0.2;
-                float lumaInAvg  = dot(max(inAvg, 0.0), kLuma);
-                float lumaNatAvg = dot(max(natAvg, 0.0), kLuma);
-                float diffAvg = abs(lumaInAvg - lumaNatAvg);
-                weight = saturate(1.0 - (diffAvg * 2.0) / (lumaInAvg + lumaNatAvg + 0.05));
-                // P0 时间坡道：连续 skip 帧强度缓降，消除恢复/衰减突变
-                weight *= gVrnrRamp;
-            }
-
             result = lerp(original, result, weight * saturate(gTransferStrength));
         }
         else if (gTransferStrength < 0.999)
@@ -220,38 +183,14 @@ void CS_Resolve(uint3 id : SV_DispatchThreadID, uint3 tid : SV_GroupThreadID, ui
         float inLuma   = dot(max(smallInput, 0.0), kLuma);
         float diff     = abs(inLuma - origLuma);
         float weight   = saturate(1.0 - (diff * 2.5) / (origLuma + inLuma + 0.05));
-
-        // 0.6.3 防闪烁（P1 空间平滑）：与 Mode 0 相同——邻域平均消噪抖。
-        // native 邻居直接复用 LDS tile（RCAS 也要用，零额外显存读取）。
-        if (gVrnrAf != 0)
-        {
-            float nE = dot(max(s_nativeTile[tid.y + 1][tid.x + 2], 0.0), kLuma);
-            float nW = dot(max(s_nativeTile[tid.y + 1][tid.x + 0], 0.0), kLuma);
-            float nS = dot(max(s_nativeTile[tid.y + 2][tid.x + 1], 0.0), kLuma);
-            float nN = dot(max(s_nativeTile[tid.y + 0][tid.x + 1], 0.0), kLuma);
-            float2 pxAf = 1.0 / float2(gNativeWidth, gNativeHeight);
-            float iE = dot(max(gSmallInput.SampleLevel(gLinear, uv + float2( pxAf.x, 0), 0).rgb, 0.0), kLuma);
-            float iW = dot(max(gSmallInput.SampleLevel(gLinear, uv + float2(-pxAf.x, 0), 0).rgb, 0.0), kLuma);
-            float iS = dot(max(gSmallInput.SampleLevel(gLinear, uv + float2(0,  pxAf.y), 0).rgb, 0.0), kLuma);
-            float iN = dot(max(gSmallInput.SampleLevel(gLinear, uv + float2(0, -pxAf.y), 0).rgb, 0.0), kLuma);
-            float oAvg = (origLuma + nE + nW + nS + nN) * 0.2;
-            float iAvg = (inLuma  + iE + iW + iS + iN) * 0.2;
-            float diffAvg = abs(iAvg - oAvg);
-            weight = saturate(1.0 - (diffAvg * 2.5) / (oAvg + iAvg + 0.05));
-            // P0 时间坡道：连续 skip 帧强度缓降
-            weight *= gVrnrRamp;
-        }
-
         scaledEdit *= weight;
     }
 
     // Base native frame + scaled neural delta
     float3 result = max(original + scaledEdit, 0.0);
 
-    // 4. HDR highlight & shadow guard using luminance ratio
-    // 0.6.3 防闪烁（P2 守恒对称化）：skip 帧同样执行——比例由上一 NR 帧的
-    // 输入/输出算出，与本帧一致，保证高光区两条链路亮度一致，消除钳制闪烁。
-    if (gIsSkipFrame == 0 || gVrnrAf != 0)
+    // 4. HDR highlight & shadow guard using luminance ratio (only on evaluated frames to prevent stale luminance clamping)
+    if (gIsSkipFrame == 0)
     {
         float origLuma = dot(max(original, 0.0), kLuma);
         float inLuma   = dot(max(smallInput, 0.0), kLuma);

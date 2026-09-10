@@ -65,7 +65,6 @@ static void ClampAll() {
     if (s_cfg.nrLocalTone  > 2.0f) s_cfg.nrLocalTone  = 2.0f;
     if (s_cfg.nrSkinStruct < -1.0f) s_cfg.nrSkinStruct = -1.0f;
     if (s_cfg.nrSkinStruct >  2.0f) s_cfg.nrSkinStruct =  2.0f;
-    if (s_cfg.vrnrInterval < 1 || s_cfg.vrnrInterval > 3) s_cfg.vrnrInterval = 1;
 }
 
 static void LoadIni() {
@@ -98,15 +97,9 @@ static void LoadIni() {
     SetLang(lang);   // sync the global display language
 
     // v0.6.0 upstream features
-    {
-        int enableAlt = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_iniPath) != 0;
-        int vi = (int)GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrInterval", 0, s_iniPath);
-        if (vi < 1 || vi > 3) vi = enableAlt ? 2 : 1;   // legacy INIs carry only the on/off flag
-        s_cfg.vrnrInterval = vi;
-    }
-    s_cfg.vrnrBlend  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrBlend", 1, s_iniPath) != 0;
-    s_cfg.vrnrSched  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", 0, s_iniPath) != 0;
     s_cfg.depthAware  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, s_iniPath) != 0;
+    s_cfg.vrnr        = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_iniPath) != 0;
+    s_cfg.vrnrAntiFlicker = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAntiFlicker", 1, s_iniPath) != 0;
     s_cfg.anamorphic  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAnamorphic", 0, s_iniPath) != 0;
     GetPrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleX", L"0.65", buf, 64, s_iniPath);
     s_cfg.scaleX = (float)_wtof(buf);
@@ -149,10 +142,8 @@ static void SaveIni() {
     swprintf_s(buf, L"%d", s_cfg.keyToggleUi);    SaveIniValue(L"Hotkeys", L"KeyToggleUI", buf);
     swprintf_s(buf, L"%u", (uint32_t)s_cfg.uiLanguage); SaveIniValue(L"DLSSNR_Proxy", L"UiLanguage", buf);
     SaveIniValue(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", s_cfg.depthAware ? L"1" : L"0");
-    SaveIniValue(L"DLSSNR_Proxy", L"EnableAlternatingFrames", (s_cfg.vrnrInterval > 1) ? L"1" : L"0");
-    swprintf_s(buf, L"%u", (uint32_t)s_cfg.vrnrInterval); SaveIniValue(L"DLSSNR_Proxy", L"VrnrInterval", buf);
-    SaveIniValue(L"DLSSNR_Proxy", L"VrnrBlend", s_cfg.vrnrBlend ? L"1" : L"0");
-    SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdaptiveSkip", s_cfg.vrnrSched ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"EnableAlternatingFrames", s_cfg.vrnr ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrAntiFlicker", s_cfg.vrnrAntiFlicker ? L"1" : L"0");
     SaveIniValue(L"DLSSNR_Proxy", L"EnableAnamorphic", s_cfg.anamorphic ? L"1" : L"0");
     swprintf_s(buf, L"%.2f", s_cfg.scaleX);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleX", buf);
     swprintf_s(buf, L"%.2f", s_cfg.scaleY);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleY", buf);
@@ -184,10 +175,8 @@ static void PushShared() {
     g_sh->keyToggleUi      = (uint32_t)s_cfg.keyToggleUi;
     g_sh->uiLanguage       = (uint32_t)s_cfg.uiLanguage;
     g_sh->enableDepthAware = s_cfg.depthAware ? 1 : 0;
-    g_sh->enableVrnr       = (s_cfg.vrnrInterval > 1) ? 1 : 0;
-    g_sh->vrnrInterval     = (uint32_t)s_cfg.vrnrInterval;
-    g_sh->vrnrBlend        = s_cfg.vrnrBlend ? 1 : 0;
-    g_sh->vrnrSched        = s_cfg.vrnrSched ? 1 : 0;
+    g_sh->enableVrnr       = s_cfg.vrnr ? 1 : 0;
+    g_sh->vrnrAntiFlicker  = s_cfg.vrnrAntiFlicker ? 1 : 0;
     g_sh->enableAnamorphic = s_cfg.anamorphic ? 1 : 0;
     g_sh->scaleX           = s_cfg.scaleX;
     g_sh->scaleY           = s_cfg.scaleY;
@@ -222,13 +211,8 @@ static void AdoptFromShared() {
     if (s_cfg.uiLanguage < 0 || s_cfg.uiLanguage >= L_COUNT) s_cfg.uiLanguage = (int)L_ZH;
     SetLang(s_cfg.uiLanguage);
     s_cfg.depthAware  = g_sh->enableDepthAware != 0;
-    {
-        int vi = (int)g_sh->vrnrInterval;
-        if (vi < 1 || vi > 3) vi = g_sh->enableVrnr ? 2 : 1;
-        s_cfg.vrnrInterval = vi;
-    }
-    s_cfg.vrnrBlend   = g_sh->vrnrBlend != 0;
-    s_cfg.vrnrSched   = g_sh->vrnrSched != 0;
+    s_cfg.vrnr        = g_sh->enableVrnr != 0;
+    s_cfg.vrnrAntiFlicker = g_sh->vrnrAntiFlicker != 0;
     s_cfg.anamorphic  = g_sh->enableAnamorphic != 0;
     s_cfg.scaleX      = g_sh->scaleX;
     s_cfg.scaleY      = g_sh->scaleY;

@@ -1,4 +1,13 @@
 // Generated forwarders for official nvngx_dlssnr.dll surface
+// ─────────────────────────────────────────────────────────────────────────────
+// 转发原理：链接器 /export 把绝大多数 NGX 导出直接指向 nvngx_dlssnr_real.dll
+// （原版 DLL 的改名）。注意 D3D12 系列导出【没有】 "=nvngx_dlssnr_real." 后缀
+// ——那几个由 proxy_main.cpp 自己实现（我们要拦截它们做降采样/合成），
+// 内部经 real_* 函数指针调用原版。real_* 指针在 forwarders.h 里声明、
+// proxy_main.cpp 的 EnsureRealModuleLoaded() 里 LoadLibraryW 赋值。
+// ⚠️ 崩溃防线：游戏持有的真实 feature 句柄一旦进入延迟回收（ParkNrFeature），
+//    绝不能再经 real_Evaluate 转发——0.7.x 的 use-after-free 教训见文件头。
+// ─────────────────────────────────────────────────────────────────────────────
 #pragma comment(linker, "/export:NVSDK_NGX_CUDA_CreateFeature=nvngx_dlssnr_real.NVSDK_NGX_CUDA_CreateFeature")
 #pragma comment(linker, "/export:NVSDK_NGX_CUDA_CreateFeature1=nvngx_dlssnr_real.NVSDK_NGX_CUDA_CreateFeature1")
 #pragma comment(linker, "/export:NVSDK_NGX_CUDA_EvaluateFeature=nvngx_dlssnr_real.NVSDK_NGX_CUDA_EvaluateFeature")
