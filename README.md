@@ -52,6 +52,8 @@ Zero new GPU resources and untouched shader resource bindings; with the switch o
 ### Algorithm layer (synced with upstream v1.0.5)
 
 Hardware bilinear downsample (LDS tile cache) → low-res NR inference → **high-frequency matched residual compositing** back onto the native frame; **25%–200% supersampling**, **anamorphic scaling** (experimental), **depth-aware bilateral silhouette preservation**, HDR luminance clamp + RCAS sharpening, DRS dynamic sub-rect tracking, SDR / HDR10 PQ / scRGB / R11G11B10.
+<img width="875" height="732" alt="image" src="https://github.com/user-attachments/assets/85a61997-9dcb-40b6-9a2a-71aafeb1b4f4" />
+<img width="875" height="717" alt="image" src="https://github.com/user-attachments/assets/69b5c4f4-d2c3-4e04-b895-56311534a87c" />
 
 ---
 
