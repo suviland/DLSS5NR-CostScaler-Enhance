@@ -13,7 +13,7 @@ REM   2. 版本号改两处：本文件 VERSION 与 app_version.rc（共 5 个�
 REM   3. 步骤 1 由 fxc 从 shaders.hlsl 生成 *_Shader.h——shaders.hlsl 里的
 REM      cbuffer 布局必须与 proxy_main.cpp 的常量结构体严格一致。
 REM ---------------------------------------------------------------------------
-set VERSION=0.6.3
+set VERSION=0.7.3
 set OUTDIR=build\%VERSION%
 set OBJDIR=build\obj
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"

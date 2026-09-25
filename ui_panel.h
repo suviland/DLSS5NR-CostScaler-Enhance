@@ -90,6 +90,13 @@ enum Field {
     F_ANAMORPHIC, F_SCALE_X, F_SCALE_Y,
     F_USE_CUSTOM_NR, F_NR_STYLE, F_NR_INTENSITY, F_NR_LOCAL_STRUCT, F_NR_LOCAL_TONE,
     F_NR_SKIN_STRUCT, F_NR_AUTO_MASK,
+    // v0.7.0 upstream: Dynamic FPS Budget Scale Governor (+FG target mode)
+    F_GOV_ENABLE, F_GOV_TARGET, F_GOV_MIN, F_GOV_MAX, F_GOV_HYST,
+    F_GOV_FGMODE, F_GOV_FGMULT,
+    // v0.7.1 CN fork: VRNR anti-flicker v2 (experimental)
+    F_VRNR_FLOOR, F_VRNR_REPROJECT,
+    // v0.7.3 CN fork: frame-time adaptive strength (experimental, CPU-side)
+    F_VRNR_ADAPT, F_VRNR_ADAPT_AMOUNT, F_VRNR_ADAPT_FPS_HI, F_VRNR_ADAPT_FPS_LO,
     F_COUNT
 };
 
@@ -123,6 +130,22 @@ struct UiValues {
     float  nrLocalTone     = 1.0f;   // 0 .. 2
     float  nrSkinStruct    = -1.0f;  // -1 (auto) .. 2
     bool   nrAutoMask      = false;  // UseAutoMask
+    // v0.7.0 upstream: Governor (+ FG target mode)
+    bool   govEnable       = false;  // [Governor] EnableGovernor
+    float  govTargetFps    = 60.0f;  // 30 .. 240
+    float  govMinScale     = 0.50f;  // 0.25 .. 2.00
+    float  govMaxScale     = 1.00f;  // 0.25 .. 2.00
+    float  govHysteresis   = 2.0f;   // 0.5 .. 10.0 s
+    bool   govFgMode       = false;  // [Governor] EnableFgMode
+    float  govFgMult       = 2.0f;   // 1.0 .. 10.0 (presets 2/3/4)
+    // v0.7.1 CN fork: VRNR anti-flicker v2 (experimental)
+    float  vrnrWeightFloor = 0.60f;  // [DLSSNR_Proxy] VrnrWeightFloor (0..1)
+    bool   vrnrReproject   = true;   // [DLSSNR_Proxy] VrnrReproject
+    // v0.7.3 CN fork: frame-time adaptive strength (experimental, CPU-side)
+    bool   vrnrAdapt       = true;   // [DLSSNR_Proxy] VrnrAdapt
+    float  vrnrAdaptAmount = 0.60f;  // [DLSSNR_Proxy] VrnrAdaptAmount (0..1)
+    float  vrnrAdaptFpsHi  = 45.0f;  // [DLSSNR_Proxy] VrnrAdaptFpsHi
+    float  vrnrAdaptFpsLo  = 25.0f;  // [DLSSNR_Proxy] VrnrAdaptFpsLo
 
     bool Equals(const UiValues& o) const {
         return enableProxy == o.enableProxy && scale == o.scale && mode == o.mode &&
@@ -137,7 +160,14 @@ struct UiValues {
                useCustomNR == o.useCustomNR && nrStyle == o.nrStyle &&
                nrIntensity == o.nrIntensity && nrLocalStruct == o.nrLocalStruct &&
                nrLocalTone == o.nrLocalTone && nrSkinStruct == o.nrSkinStruct &&
-               nrAutoMask == o.nrAutoMask;
+               nrAutoMask == o.nrAutoMask &&
+               govEnable == o.govEnable && govTargetFps == o.govTargetFps &&
+               govMinScale == o.govMinScale && govMaxScale == o.govMaxScale &&
+               govHysteresis == o.govHysteresis && govFgMode == o.govFgMode &&
+               govFgMult == o.govFgMult &&
+               vrnrWeightFloor == o.vrnrWeightFloor && vrnrReproject == o.vrnrReproject &&
+               vrnrAdapt == o.vrnrAdapt && vrnrAdaptAmount == o.vrnrAdaptAmount &&
+               vrnrAdaptFpsHi == o.vrnrAdaptFpsHi && vrnrAdaptFpsLo == o.vrnrAdaptFpsLo;
     }
 };
 
@@ -327,7 +357,8 @@ struct Fonts {
 // ============================================================================
 // Row model + bilingual labels
 // ============================================================================
-enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_SEG3, RK_KEY, RK_FOOTER, RK_LINK };
+enum RowKind : int { RK_OVERVIEW = 0, RK_SECTION, RK_TOGGLE, RK_SLIDER, RK_CHIPS, RK_SEG, RK_SEG3, RK_KEY, RK_FOOTER, RK_LINK,
+                     RK_CHIPS_FPS, RK_CHIPS_FGM };
 
 // Note: RowText4 is defined at the top of this file (line ~43) for LANG_PICK.
 
@@ -360,6 +391,19 @@ static const RowText4* RowTextFor(Field f) {
         { L"局部色调强度",                                                       L"Local Tone Strength",                       L"Локальный тон",                        L"로컬 톤 강도" },            // F_NR_LOCAL_TONE
         { L"皮肤结构强度",                                                       L"Skin Structure Strength",                   L"Структура кожи",                       L"피부 구조 강도" },          // F_NR_SKIN_STRUCT
         { L"自动遮罩",                                                           L"Auto Mask",                                 L"Автомаска",                            L"자동 마스크" },             // F_NR_AUTO_MASK
+        { L"启用 Governor",                                                      L"Enable Governor",                           L"Включить Governor",                    L"Governor 활성화" },         // F_GOV_ENABLE
+        { L"目标帧率",                                                           L"Target FPS",                                L"Целевой FPS",                          L"목표 FPS" },                // F_GOV_TARGET
+        { L"最低缩放",                                                           L"Min Scale",                                 L"Мин. масштаб",                         L"최소 배율" },                // F_GOV_MIN
+        { L"最高缩放",                                                           L"Max Scale",                                 L"Макс. масштаб",                        L"최대 배율" },                // F_GOV_MAX
+        { L"冷却时间",                                                           L"Cooldown",                                  L"Охлаждение",                           L"쿨다운" },                   // F_GOV_HYST
+        { L"帧生成目标模式",                                                     L"Frame-Gen Target Mode",                     L"Режим Frame-Gen",                      L"프레임 생성 모드" },        // F_GOV_FGMODE
+        { L"FG 倍率",                                                            L"FG Multiplier",                             L"Множитель FG",                         L"FG 배율" },                 // F_GOV_FGMULT
+        { L"权重下限（实验）",                                                   L"Weight Floor (Exp.)",                       L"Мин. вес (эксп.)",                     L"가중치 하한 (실험)" },      // F_VRNR_FLOOR
+        { L"运动矢量对齐（实验）",                                               L"MV Reproject (Exp.)",                       L"Репроекция MV (эксп.)",                L"MV 재투영 (실험)" },        // F_VRNR_REPROJECT
+        { L"帧时自适应（实验）",                                                 L"FPS Adaptive (Exp.)",                       L"Адаптация FPS (эксп.)",                L"FPS 적응 (실험)" },         // F_VRNR_ADAPT
+        { L"自适应幅度（实验）",                                                 L"Adaptive Amount (Exp.)",                    L"Величина адапт. (эксп.)",              L"적응 강도 (실험)" },        // F_VRNR_ADAPT_AMOUNT
+        { L"自适应上限帧率",                                                     L"Adaptive FPS Hi",                           L"Адапт. FPS верх",                      L"적응 상한 FPS" },           // F_VRNR_ADAPT_FPS_HI
+        { L"自适应下限帧率",                                                     L"Adaptive FPS Lo",                           L"Адапт. FPS низ",                       L"적응 하한 FPS" },           // F_VRNR_ADAPT_FPS_LO
     };
     int i = (int)f;
     if (i < 0 || i >= (int)(sizeof(kMap) / sizeof(kMap[0]))) return nullptr;
@@ -367,7 +411,7 @@ static const RowText4* RowTextFor(Field f) {
 }
 // Section ids used as Item.field for RK_SECTION rows
 enum Sec : int { S_PROXY = 0x1000, S_QUALITY = 0x1001, S_KEYS = 0x1002,
-                 S_ADV = 0x1003, S_NR = 0x1004 };
+                 S_ADV = 0x1003, S_NR = 0x1004, S_GOV = 0x1005 };
 
 struct Item { int kind; int field; RECT rc; };
 
@@ -378,10 +422,12 @@ inline const RowText4* SecText(int sec) {
     static const RowText4 k = { L"\u5feb\u6377\u952e", L"Hotkeys", L"\u0413\u043e\u0440\u044f\u0447\u0438\u0435 \u043a\u043b\u0430\u0432\u0438\u0448\u0438", L"\ub2e8\ucd95\ud0a4" };
     static const RowText4 a = { L"高级", L"Advanced", L"Дополнительно", L"고급" };
     static const RowText4 n = { L"NVIDIA 降噪", L"NVIDIA NR", L"NVIDIA NR", L"NVIDIA NR" };
+    static const RowText4 g = { L"Governor 帧率调节", L"FPS Governor", L"Governor FPS", L"FPS Governor" };
     if (sec == S_QUALITY) return &q;
     if (sec == S_KEYS)    return &k;
     if (sec == S_ADV)     return &a;
     if (sec == S_NR)      return &n;
+    if (sec == S_GOV)     return &g;
     return &p;
 }
 
@@ -404,6 +450,10 @@ inline const RowText4 kAutoLabel  = { L"\u81ea\u52a8", L"Auto", L"\u0410\u0432\u
 // Presets for the scale chips row
 struct ChipDef { float v; };
 static const ChipDef kScaleChips[] = { {2.00f}, {1.50f}, {1.00f}, {0.85f}, {0.80f}, {0.75f}, {0.67f}, {0.50f} };
+// Governor target-FPS presets (upstream: 30/60/75/90/120/144)
+static const ChipDef kFpsChips[]   = { {30.0f}, {60.0f}, {75.0f}, {90.0f}, {120.0f}, {144.0f} };
+// Frame-Gen multiplier presets (2x = DLSS3/FSR3, 3x/4x = LSFG)
+static const ChipDef kFgmChips[]   = { {2.0f}, {3.0f}, {4.0f} };
 
 // ---------------------------------------------------------------------------
 // Software cursor (in-game overlay). When the proxy hijacks the mouse via raw
@@ -449,13 +499,14 @@ inline void DrawArrowCursor(HDC dc, int x, int y) {
 // The panel is split into manager-style pages (top tab bar switches them);
 // every row here uses content-local Y (the tab bar height is added by Panel).
 // Returns the content height of the requested page.
-inline int PageCount() { return 4; }
+inline int PageCount() { return 5; }
 // Tab captions (manager-style top tab bar)
 inline const RowText4* PageTabText(int p) {
-    static const RowText4 tabs[4] = {
+    static const RowText4 tabs[5] = {
         { L"\u57fa\u7840",       L"Basic",       L"\u041e\u0441\u043d\u043e\u0432\u043d\u043e\u0435",  L"\uae30\ubcf8" },     // 基础
         { L"\u9ad8\u7ea7",       L"Advanced",    L"\u0420\u0430\u0441\u0448\u0438\u0440\u0435\u043d.", L"\uace0\uae09" },     // 高级
         { L"\u964d\u566a NR",    L"NR",          L"\u0428\u0443\u043c\u043e\u0434\u0430\u0432",        L"\ub178\uc774\uc988" },// 降噪 NR
+        { L"Governor",           L"Governor",    L"Governor",           L"Governor" },                 // Governor 帧率调节
         { L"\u5feb\u6377\u952e", L"Hotkeys",     L"\u041a\u043b\u0430\u0432\u0438\u0448\u0438",        L"\ub2e8\ucd95\ud0a4" },// 快捷键
     };
     if (p < 0 || p >= PageCount()) p = 0;
@@ -496,6 +547,12 @@ inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, 
         push(RK_TOGGLE, F_DEPTH_AWARE, 32);
         push(RK_TOGGLE, F_VRNR, 32);
         push(RK_TOGGLE, F_VRNR_AF, 32);
+        push(RK_SLIDER, F_VRNR_FLOOR, 46);
+        push(RK_TOGGLE, F_VRNR_REPROJECT, 32);
+        push(RK_TOGGLE, F_VRNR_ADAPT, 32);
+        push(RK_SLIDER, F_VRNR_ADAPT_AMOUNT, 46);
+        push(RK_SLIDER, F_VRNR_ADAPT_FPS_HI, 46);
+        push(RK_SLIDER, F_VRNR_ADAPT_FPS_LO, 46);
         push(RK_TOGGLE, F_ANAMORPHIC, 32);
         push(RK_SLIDER, F_SCALE_X, 46);
         push(RK_SLIDER, F_SCALE_Y, 46);
@@ -511,8 +568,21 @@ inline int BuildLayout(int w, bool overlay, bool allowKeyEdit, bool withGithub, 
         push(RK_SLIDER, F_NR_SKIN_STRUCT, 46);
         push(RK_TOGGLE, F_NR_AUTO_MASK, 32);
         gap(8);
+    } else if (page == 3) {
+        // ── Page 4: Governor 帧率调节 (v0.7.0 upstream) ----------------------
+        push(RK_SECTION, S_GOV, 24);
+        push(RK_TOGGLE, F_GOV_ENABLE, 32);
+        push(RK_SLIDER, F_GOV_TARGET, 46);
+        push(RK_CHIPS_FPS, F_GOV_TARGET, 28);
+        push(RK_SLIDER, F_GOV_MIN, 46);
+        push(RK_SLIDER, F_GOV_MAX, 46);
+        push(RK_SLIDER, F_GOV_HYST, 46);
+        push(RK_TOGGLE, F_GOV_FGMODE, 32);
+        push(RK_CHIPS_FGM, F_GOV_FGMULT, 28);
+        push(RK_SLIDER, F_GOV_FGMULT, 46);
+        gap(8);
     } else {
-        // ── Page 4: 快捷键 Hotkeys ------------------------------------------
+        // ── Page 5: 快捷键 Hotkeys ------------------------------------------
         push(RK_SECTION, S_KEYS, 24);
         push(RK_TOGGLE, F_ENABLE_HOTKEYS, 32);
         push(RK_TOGGLE, F_REQUIRE_CTRLALT, 32);
@@ -564,14 +634,24 @@ inline void FieldRange(Field f, float& lo, float& hi) {
     else if (f == F_NR_LOCAL_STRUCT) { lo = 0.0f; hi = 2.0f; }
     else if (f == F_NR_LOCAL_TONE)   { lo = 0.0f; hi = 2.0f; }
     else if (f == F_NR_SKIN_STRUCT)  { lo = -1.0f; hi = 2.0f; }
+    else if (f == F_GOV_TARGET)    { lo = 30.0f; hi = 240.0f; }
+    else if (f == F_GOV_MIN || f == F_GOV_MAX) { lo = 0.25f; hi = 2.00f; }
+    else if (f == F_GOV_HYST)      { lo = 0.5f; hi = 10.0f; }
+    else if (f == F_GOV_FGMULT)    { lo = 1.0f; hi = 10.0f; }
+    else if (f == F_VRNR_ADAPT_AMOUNT) { lo = 0.0f; hi = 1.0f; }
+    else if (f == F_VRNR_ADAPT_FPS_HI) { lo = 15.0f; hi = 120.0f; }
+    else if (f == F_VRNR_ADAPT_FPS_LO) { lo = 10.0f; hi = 90.0f; }
 }
 inline bool FieldIsBool(Field f) {
     return f == F_ENABLE_PROXY || f == F_ENABLE_HOTKEYS || f == F_REQUIRE_CTRLALT || f == F_ENABLE_UI ||
            f == F_DEPTH_AWARE || f == F_VRNR || f == F_VRNR_AF || f == F_ANAMORPHIC ||
-           f == F_USE_CUSTOM_NR || f == F_NR_AUTO_MASK;
+           f == F_USE_CUSTOM_NR || f == F_NR_AUTO_MASK ||
+           f == F_GOV_ENABLE || f == F_GOV_FGMODE || f == F_VRNR_REPROJECT ||
+           f == F_VRNR_ADAPT;
 }
 inline bool FieldIsPercent(Field f) {
-    return f == F_SCALE || f == F_SCALE_X || f == F_SCALE_Y;
+    return f == F_SCALE || f == F_SCALE_X || f == F_SCALE_Y ||
+           f == F_GOV_MIN || f == F_GOV_MAX;
 }
 inline bool FieldIsKey(Field f) {
     return f == F_KEY_TOGGLE_PROXY || f == F_KEY_TOGGLE_MODE || f == F_KEY_SCALEUP ||
@@ -666,6 +746,10 @@ inline bool GetBool(const UiValues& v, Field f) {
     case F_ANAMORPHIC: return v.anamorphic;
     case F_USE_CUSTOM_NR: return v.useCustomNR;
     case F_NR_AUTO_MASK: return v.nrAutoMask;
+    case F_GOV_ENABLE: return v.govEnable;
+    case F_GOV_FGMODE: return v.govFgMode;
+    case F_VRNR_REPROJECT: return v.vrnrReproject;
+    case F_VRNR_ADAPT: return v.vrnrAdapt;
     default: return false;
     }
 }
@@ -681,6 +765,10 @@ inline void SetBool(UiValues& v, Field f, bool b) {
     case F_ANAMORPHIC: v.anamorphic = b; break;
     case F_USE_CUSTOM_NR: v.useCustomNR = b; break;
     case F_NR_AUTO_MASK: v.nrAutoMask = b; break;
+    case F_GOV_ENABLE: v.govEnable = b; break;
+    case F_GOV_FGMODE: v.govFgMode = b; break;
+    case F_VRNR_REPROJECT: v.vrnrReproject = b; break;
+    case F_VRNR_ADAPT: v.vrnrAdapt = b; break;
     default: break;
     }
 }
@@ -696,6 +784,15 @@ inline float GetFloat(const UiValues& v, Field f) {
     case F_NR_LOCAL_STRUCT: return v.nrLocalStruct;
     case F_NR_LOCAL_TONE: return v.nrLocalTone;
     case F_NR_SKIN_STRUCT: return v.nrSkinStruct;
+    case F_GOV_TARGET: return v.govTargetFps;
+    case F_GOV_MIN: return v.govMinScale;
+    case F_GOV_MAX: return v.govMaxScale;
+    case F_GOV_HYST: return v.govHysteresis;
+    case F_GOV_FGMULT: return v.govFgMult;
+    case F_VRNR_FLOOR: return v.vrnrWeightFloor;
+    case F_VRNR_ADAPT_AMOUNT: return v.vrnrAdaptAmount;
+    case F_VRNR_ADAPT_FPS_HI: return v.vrnrAdaptFpsHi;
+    case F_VRNR_ADAPT_FPS_LO: return v.vrnrAdaptFpsLo;
     default: return 0.0f;
     }
 }
@@ -711,6 +808,15 @@ inline void SetFloat(UiValues& v, Field f, float x) {
     case F_NR_LOCAL_STRUCT: v.nrLocalStruct = x; break;
     case F_NR_LOCAL_TONE: v.nrLocalTone = x; break;
     case F_NR_SKIN_STRUCT: v.nrSkinStruct = x; break;
+    case F_GOV_TARGET: v.govTargetFps = x; break;
+    case F_GOV_MIN: v.govMinScale = x; break;
+    case F_GOV_MAX: v.govMaxScale = x; break;
+    case F_GOV_HYST: v.govHysteresis = x; break;
+    case F_GOV_FGMULT: v.govFgMult = x; break;
+    case F_VRNR_FLOOR: v.vrnrWeightFloor = x; break;
+    case F_VRNR_ADAPT_AMOUNT: v.vrnrAdaptAmount = x; break;
+    case F_VRNR_ADAPT_FPS_HI: v.vrnrAdaptFpsHi = x; break;
+    case F_VRNR_ADAPT_FPS_LO: v.vrnrAdaptFpsLo = x; break;
     default: break;
     }
 }
@@ -828,6 +934,9 @@ inline void DrawSliderRow(HDC dc, const RECT& rc, Field field, float val, bool h
     if (FieldIsPercent(field)) swprintf_s(vb, L"%d%%", (int)(val * 100.0f + 0.5f));
     else if (field == F_NR_SKIN_STRUCT && val <= -0.995f)
         swprintf_s(vb, L"%s", LANG_PICK(kAutoLabel));      // -1.0 = auto
+    else if (field == F_GOV_TARGET)  swprintf_s(vb, L"%.0f FPS", val);
+    else if (field == F_GOV_HYST)    swprintf_s(vb, L"%.1f s", val);
+    else if (field == F_GOV_FGMULT)  swprintf_s(vb, L"%.1f\u00d7", val);
     else swprintf_s(vb, L"%.2f", val);
     BlitLabel(dc, rc.left, rc.top, (rc.right - rc.left) - 74, 18,
               LANG_PICK(*rt), t.text, f.base);
@@ -862,6 +971,45 @@ inline void DrawChipsRow(HDC dc, const RECT& rc, float scale, const Fonts& f, co
         swprintf_s(buf, L"%d%%", (int)(v * 100.0f + 0.5f));
         BlitText(dc, x, cy, cw, 24, buf, on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
+}
+// Governor numeric chip rows (v0.7.0): FPS presets and FG multiplier presets.
+// kind: 0 = FPS (30/60/75/90/120/144, "144" labels), 1 = FG mult (2/3/4, "2×").
+inline void DrawNumChipsRow(HDC dc, const RECT& rc, float val, int kind, const Fonts& f, const Theme& t) {
+    const ChipDef* chips = (kind == 0) ? kFpsChips : kFgmChips;
+    const int n = (kind == 0) ? (int)(sizeof(kFpsChips) / sizeof(kFpsChips[0]))
+                              : (int)(sizeof(kFgmChips) / sizeof(kFgmChips[0]));
+    int gap = 6, area = rc.right - rc.left;
+    int cw = (area - gap * (n - 1)) / n;
+    int cy = rc.top + (rc.bottom - rc.top - 24) / 2;
+    wchar_t buf[16];
+    for (int i = 0; i < n; ++i) {
+        int x = rc.left + i * (cw + gap);
+        float v = chips[i].v;
+        bool on = (val > v - 0.26f && val < v + 0.26f);
+        if (on) BlitRound(dc, x, cy, cw, 24, 12, t.accent);
+        else { BlitRound(dc, x, cy, cw, 24, 12, t.strip); BlitFrame(dc, x, cy, cw - 1, 23, 12, t.line); }
+        if (kind == 0) swprintf_s(buf, L"%.0f", v);
+        else           swprintf_s(buf, L"%.0f\u00d7", v);
+        BlitText(dc, x, cy, cw, 24, buf, on ? t.onAccent : t.text, f.base, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+// Shared hit-test for the numeric chip rows. Returns true when a chip was hit
+// (and writes the chip value).
+inline bool NumChipsHit(const RECT& rc, int x, int kind, float& outVal) {
+    const ChipDef* chips = (kind == 0) ? kFpsChips : kFgmChips;
+    const int n = (kind == 0) ? (int)(sizeof(kFpsChips) / sizeof(kFpsChips[0]))
+                              : (int)(sizeof(kFgmChips) / sizeof(kFgmChips[0]));
+    int areaW = rc.right - rc.left;
+    int gap = 6;
+    int cw = (areaW - gap * (n - 1)) / n;
+    int pos = x - rc.left;
+    if (pos < 0) return false;
+    int c = pos / (cw + gap);
+    if (c < 0 || c >= n) return false;
+    int inside = pos - c * (cw + gap);
+    if (inside > cw) return false;
+    outVal = chips[c].v;
+    return true;
 }
 inline void DrawSegRow(HDC dc, const RECT& rc, int mode, const Fonts& f, const Theme& t) {    int gap = 8;
     int bw = (rc.right - rc.left - gap) / 2;
@@ -1040,6 +1188,8 @@ inline void Panel::Paint(HWND hwnd) {
         case RK_TOGGLE:   DrawToggleRow(mem, it.rc, (Field)it.field, GetBool(cur, (Field)it.field), hov, fonts, t); break;
         case RK_SLIDER:   DrawSliderRow(mem, it.rc, (Field)it.field, GetFloat(cur, (Field)it.field), hov, fonts, t); break;
         case RK_CHIPS:    DrawChipsRow(mem, it.rc, cur.scale, fonts, t); break;
+        case RK_CHIPS_FPS: DrawNumChipsRow(mem, it.rc, cur.govTargetFps, 0, fonts, t); break;
+        case RK_CHIPS_FGM: DrawNumChipsRow(mem, it.rc, cur.govFgMult, 1, fonts, t); break;
         case RK_SEG:      DrawSegRow(mem, it.rc, cur.mode, fonts, t); break;
         case RK_SEG3:     DrawSeg3Row(mem, it.rc, cur.nrStyle, fonts, t); break;
         case RK_KEY:      DrawKeyRow(mem, it.rc, (Field)it.field, GetKey(cur, (Field)it.field), cur.requireCtrlAlt, hov, (capIdx == i), fonts, t); break;
@@ -1235,6 +1385,22 @@ inline void Panel::OnLButtonDown(HWND hwnd, int x, int y) {
                     SetDirty(F_SCALE, now, hooks);
                 }
             }
+        }
+        break;
+    }
+    case RK_CHIPS_FPS: {
+        float v = 0.0f;
+        if (NumChipsHit(it.rc, x, 0, v)) {
+            cur.govTargetFps = v;
+            SetDirty(F_GOV_TARGET, now, hooks);
+        }
+        break;
+    }
+    case RK_CHIPS_FGM: {
+        float v = 0.0f;
+        if (NumChipsHit(it.rc, x, 1, v)) {
+            cur.govFgMult = v;
+            SetDirty(F_GOV_FGMULT, now, hooks);
         }
         break;
     }

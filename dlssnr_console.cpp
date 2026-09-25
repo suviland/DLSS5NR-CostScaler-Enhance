@@ -65,6 +65,24 @@ static void ClampAll() {
     if (s_cfg.nrLocalTone  > 2.0f) s_cfg.nrLocalTone  = 2.0f;
     if (s_cfg.nrSkinStruct < -1.0f) s_cfg.nrSkinStruct = -1.0f;
     if (s_cfg.nrSkinStruct >  2.0f) s_cfg.nrSkinStruct =  2.0f;
+    if (s_cfg.govTargetFps < 30.0f) s_cfg.govTargetFps = 30.0f;
+    if (s_cfg.govTargetFps > 240.0f) s_cfg.govTargetFps = 240.0f;
+    if (s_cfg.govMinScale < 0.25f) s_cfg.govMinScale = 0.25f;
+    if (s_cfg.govMinScale > 2.00f) s_cfg.govMinScale = 2.00f;
+    if (s_cfg.govMaxScale < s_cfg.govMinScale) s_cfg.govMaxScale = s_cfg.govMinScale;
+    if (s_cfg.govMaxScale > 2.00f) s_cfg.govMaxScale = 2.00f;
+    if (s_cfg.govHysteresis < 0.5f) s_cfg.govHysteresis = 0.5f;
+    if (s_cfg.govHysteresis > 10.0f) s_cfg.govHysteresis = 10.0f;
+    if (s_cfg.govFgMult < 1.0f) s_cfg.govFgMult = 1.0f;
+    if (s_cfg.govFgMult > 10.0f) s_cfg.govFgMult = 10.0f;
+    if (s_cfg.vrnrWeightFloor < 0.0f) s_cfg.vrnrWeightFloor = 0.0f;
+    if (s_cfg.vrnrWeightFloor > 1.0f) s_cfg.vrnrWeightFloor = 1.0f;
+    if (s_cfg.vrnrAdaptAmount < 0.0f) s_cfg.vrnrAdaptAmount = 0.0f;
+    if (s_cfg.vrnrAdaptAmount > 1.0f) s_cfg.vrnrAdaptAmount = 1.0f;
+    if (s_cfg.vrnrAdaptFpsHi < 15.0f) s_cfg.vrnrAdaptFpsHi = 15.0f;
+    if (s_cfg.vrnrAdaptFpsHi > 120.0f) s_cfg.vrnrAdaptFpsHi = 120.0f;
+    if (s_cfg.vrnrAdaptFpsLo < 10.0f) s_cfg.vrnrAdaptFpsLo = 10.0f;
+    if (s_cfg.vrnrAdaptFpsLo > s_cfg.vrnrAdaptFpsHi - 1.0f) s_cfg.vrnrAdaptFpsLo = s_cfg.vrnrAdaptFpsHi - 1.0f;
 }
 
 static void LoadIni() {
@@ -100,6 +118,16 @@ static void LoadIni() {
     s_cfg.depthAware  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, s_iniPath) != 0;
     s_cfg.vrnr        = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_iniPath) != 0;
     s_cfg.vrnrAntiFlicker = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAntiFlicker", 1, s_iniPath) != 0;
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrWeightFloor", L"0.60", buf, 64, s_iniPath);
+    s_cfg.vrnrWeightFloor = (float)_wtof(buf);
+    s_cfg.vrnrReproject = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrReproject", 1, s_iniPath) != 0;
+    s_cfg.vrnrAdapt = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdapt", 1, s_iniPath) != 0;
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptAmount", L"0.60", buf, 64, s_iniPath);
+    s_cfg.vrnrAdaptAmount = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsHi", L"45", buf, 64, s_iniPath);
+    s_cfg.vrnrAdaptFpsHi = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsLo", L"25", buf, 64, s_iniPath);
+    s_cfg.vrnrAdaptFpsLo = (float)_wtof(buf);
     s_cfg.anamorphic  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAnamorphic", 0, s_iniPath) != 0;
     GetPrivateProfileStringW(L"DLSSNR_Proxy", L"ResolutionScaleX", L"0.65", buf, 64, s_iniPath);
     s_cfg.scaleX = (float)_wtof(buf);
@@ -116,6 +144,20 @@ static void LoadIni() {
     GetPrivateProfileStringW(L"DLSSNR_Settings", L"SkinStructureStrength", L"-1.00", buf, 64, s_iniPath);
     s_cfg.nrSkinStruct = (float)_wtof(buf);
     s_cfg.nrAutoMask   = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseAutoMask", 0, s_iniPath) != 0;
+
+    // v0.7.0 upstream: Governor + FG target mode
+    s_cfg.govEnable    = GetPrivateProfileIntW(L"Governor", L"EnableGovernor", 0, s_iniPath) != 0;
+    GetPrivateProfileStringW(L"Governor", L"TargetFps", L"60.0", buf, 64, s_iniPath);
+    s_cfg.govTargetFps = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"MinScale", L"0.50", buf, 64, s_iniPath);
+    s_cfg.govMinScale = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"MaxScale", L"1.00", buf, 64, s_iniPath);
+    s_cfg.govMaxScale = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"HysteresisSec", L"2.0", buf, 64, s_iniPath);
+    s_cfg.govHysteresis = (float)_wtof(buf);
+    s_cfg.govFgMode    = GetPrivateProfileIntW(L"Governor", L"EnableFgMode", 0, s_iniPath) != 0;
+    GetPrivateProfileStringW(L"Governor", L"FgMultiplier", L"2.0", buf, 64, s_iniPath);
+    s_cfg.govFgMult = (float)_wtof(buf);
 
     ClampAll();
 }
@@ -144,6 +186,13 @@ static void SaveIni() {
     SaveIniValue(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", s_cfg.depthAware ? L"1" : L"0");
     SaveIniValue(L"DLSSNR_Proxy", L"EnableAlternatingFrames", s_cfg.vrnr ? L"1" : L"0");
     SaveIniValue(L"DLSSNR_Proxy", L"VrnrAntiFlicker", s_cfg.vrnrAntiFlicker ? L"1" : L"0");
+    swprintf_s(buf, L"%.2f", s_cfg.vrnrWeightFloor);
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrWeightFloor", buf);
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrReproject", s_cfg.vrnrReproject ? L"1" : L"0");
+    SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdapt", s_cfg.vrnrAdapt ? L"1" : L"0");
+    swprintf_s(buf, L"%.2f", s_cfg.vrnrAdaptAmount); SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdaptAmount", buf);
+    swprintf_s(buf, L"%.0f", s_cfg.vrnrAdaptFpsHi);  SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdaptFpsHi", buf);
+    swprintf_s(buf, L"%.0f", s_cfg.vrnrAdaptFpsLo);  SaveIniValue(L"DLSSNR_Proxy", L"VrnrAdaptFpsLo", buf);
     SaveIniValue(L"DLSSNR_Proxy", L"EnableAnamorphic", s_cfg.anamorphic ? L"1" : L"0");
     swprintf_s(buf, L"%.2f", s_cfg.scaleX);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleX", buf);
     swprintf_s(buf, L"%.2f", s_cfg.scaleY);            SaveIniValue(L"DLSSNR_Proxy", L"ResolutionScaleY", buf);
@@ -154,6 +203,13 @@ static void SaveIni() {
     swprintf_s(buf, L"%.2f", s_cfg.nrLocalTone);       SaveIniValue(L"DLSSNR_Settings", L"LocalToneStrength", buf);
     swprintf_s(buf, L"%.2f", s_cfg.nrSkinStruct);      SaveIniValue(L"DLSSNR_Settings", L"SkinStructureStrength", buf);
     swprintf_s(buf, L"%u", s_cfg.nrAutoMask ? 1u : 0u); SaveIniValue(L"DLSSNR_Settings", L"UseAutoMask", buf);
+    SaveIniValue(L"Governor", L"EnableGovernor", s_cfg.govEnable ? L"1" : L"0");
+    swprintf_s(buf, L"%.0f", s_cfg.govTargetFps);      SaveIniValue(L"Governor", L"TargetFps", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.govMinScale);       SaveIniValue(L"Governor", L"MinScale", buf);
+    swprintf_s(buf, L"%.2f", s_cfg.govMaxScale);       SaveIniValue(L"Governor", L"MaxScale", buf);
+    swprintf_s(buf, L"%.1f", s_cfg.govHysteresis);     SaveIniValue(L"Governor", L"HysteresisSec", buf);
+    SaveIniValue(L"Governor", L"EnableFgMode", s_cfg.govFgMode ? L"1" : L"0");
+    swprintf_s(buf, L"%.1f", s_cfg.govFgMult);         SaveIniValue(L"Governor", L"FgMultiplier", buf);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, s_iniPath); // flush
 }
 
@@ -177,6 +233,12 @@ static void PushShared() {
     g_sh->enableDepthAware = s_cfg.depthAware ? 1 : 0;
     g_sh->enableVrnr       = s_cfg.vrnr ? 1 : 0;
     g_sh->vrnrAntiFlicker  = s_cfg.vrnrAntiFlicker ? 1 : 0;
+    g_sh->vrnrWeightFloor  = s_cfg.vrnrWeightFloor;
+    g_sh->vrnrReproject    = s_cfg.vrnrReproject ? 1 : 0;
+    g_sh->vrnrAdapt        = s_cfg.vrnrAdapt ? 1 : 0;
+    g_sh->vrnrAdaptAmount  = s_cfg.vrnrAdaptAmount;
+    g_sh->vrnrAdaptFpsHi   = s_cfg.vrnrAdaptFpsHi;
+    g_sh->vrnrAdaptFpsLo   = s_cfg.vrnrAdaptFpsLo;
     g_sh->enableAnamorphic = s_cfg.anamorphic ? 1 : 0;
     g_sh->scaleX           = s_cfg.scaleX;
     g_sh->scaleY           = s_cfg.scaleY;
@@ -187,6 +249,13 @@ static void PushShared() {
     g_sh->nrLocalToneStrength      = s_cfg.nrLocalTone;
     g_sh->nrSkinStructureStrength  = s_cfg.nrSkinStruct;
     g_sh->nrUseAutoMask    = s_cfg.nrAutoMask ? 1 : 0;
+    g_sh->enableGovernor   = s_cfg.govEnable ? 1 : 0;
+    g_sh->governorTargetFps = s_cfg.govTargetFps;
+    g_sh->governorMinScale = s_cfg.govMinScale;
+    g_sh->governorMaxScale = s_cfg.govMaxScale;
+    g_sh->governorHysteresisSec = s_cfg.govHysteresis;
+    g_sh->enableGovernorFgMode = s_cfg.govFgMode ? 1 : 0;
+    g_sh->governorFgMultiplier = s_cfg.govFgMult;
     g_sh->writerSource     = 1;                 // standalone console
     g_sh->version++;
     s_lastVersion = g_sh->version;
@@ -213,6 +282,12 @@ static void AdoptFromShared() {
     s_cfg.depthAware  = g_sh->enableDepthAware != 0;
     s_cfg.vrnr        = g_sh->enableVrnr != 0;
     s_cfg.vrnrAntiFlicker = g_sh->vrnrAntiFlicker != 0;
+    s_cfg.vrnrWeightFloor = g_sh->vrnrWeightFloor;
+    s_cfg.vrnrReproject   = g_sh->vrnrReproject != 0;
+    s_cfg.vrnrAdapt       = g_sh->vrnrAdapt != 0;
+    s_cfg.vrnrAdaptAmount = g_sh->vrnrAdaptAmount;
+    s_cfg.vrnrAdaptFpsHi  = g_sh->vrnrAdaptFpsHi;
+    s_cfg.vrnrAdaptFpsLo  = g_sh->vrnrAdaptFpsLo;
     s_cfg.anamorphic  = g_sh->enableAnamorphic != 0;
     s_cfg.scaleX      = g_sh->scaleX;
     s_cfg.scaleY      = g_sh->scaleY;
@@ -223,6 +298,13 @@ static void AdoptFromShared() {
     s_cfg.nrLocalTone   = g_sh->nrLocalToneStrength;
     s_cfg.nrSkinStruct  = g_sh->nrSkinStructureStrength;
     s_cfg.nrAutoMask    = g_sh->nrUseAutoMask != 0;
+    s_cfg.govEnable     = g_sh->enableGovernor != 0;
+    s_cfg.govTargetFps  = g_sh->governorTargetFps;
+    s_cfg.govMinScale   = g_sh->governorMinScale;
+    s_cfg.govMaxScale   = g_sh->governorMaxScale;
+    s_cfg.govHysteresis = g_sh->governorHysteresisSec;
+    s_cfg.govFgMode     = g_sh->enableGovernorFgMode != 0;
+    s_cfg.govFgMult     = g_sh->governorFgMultiplier;
     ClampAll();
 }
 

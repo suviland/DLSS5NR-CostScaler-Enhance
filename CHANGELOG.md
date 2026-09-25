@@ -5,6 +5,122 @@ All notable changes to **DLSS5-NR-Boost** are documented here.
 
 ---
 
+## [0.7.3] — 2026-09-25
+
+### 修复 Fixed（VRNR 低帧率闪烁 · 帧时自适应强度）
+
+- **新增（实验）帧时自适应强度 `VrnrAdapt`**（默认开）：低帧率时推理帧
+  满强度 edit 与 skip 帧陈旧 edit×低权重交替，形成人眼敏感频段的明暗脉动
+  （帧率越低、单帧位移越大，skip 权重跌得越狠，脉动越明显）。现在按 EWMA
+  帧率自适应衰减**推理帧**的 edit 强度，缩小两帧视觉差。
+  - `VrnrAdaptAmount`（0.00–1.00，默认 0.60）：极低帧率下的最大减光比例。
+  - `VrnrAdaptFpsHi`（默认 45）/ `VrnrAdaptFpsLo`（默认 25）：smoothstep
+    起止帧率窗口，低于下限达到最大减光，高于上限完全不干预。
+  - skip 帧 dim 恒为 0（skip 帧已有 weight 衰减链路，再减光会反向拉大差距）。
+  - **纯 CPU 侧实现**：只新增 1 个 shader 常量 `gAdaptDim`（常量数 17→18），
+    零新增 GPU 资源 / SRV / UAV——吸取 0.7.2 权重图 EMA 导致设备移除的教训。
+- **UI 四端同步**：`dlssnr_shared.h` 末尾追加 `vrnrAdapt` /
+  `vrnrAdaptAmount` / `vrnrAdaptFpsHi` / `vrnrAdaptFpsLo`（companion 副本
+  同步重编）；游戏内面板「高级」页、dlssnr_console、manager 调试页、
+  companion 均新增对应控件（中 EN RU 한 四语言）；INI 新增 4 键。
+
+## [0.7.2] — 2026-09-25（已撤回，未发布）
+
+> **⚠️ 实测黑屏 + 画面冻结，整版撤回。** 自适应权重下限 + ping-pong R8
+> 权重图 EMA 引入 GPU 持久纹理（SRV/UAV 互转），疑似资源状态转换 /
+> 描述符绑定问题导致 device removed。源码备份于
+> `backups/src-0.7.2-20260925-broken.zip`，代码已回滚至 0.7.1 基线重做。
+> 低帧率闪烁改由 0.7.3 纯 CPU 侧方案解决。
+
+---
+
+## [0.7.1] — 2026-09-25
+
+### 修复 Fixed（VRNR 隔帧推理人物闪烁 · 防闪烁 v2）
+
+- **修复时间坡道在交替模式下的周期脉动（人物闪烁主因）**：0.6.3 的 P0 坡道
+  （100%→90%→72%→55%）按「连续多帧 skip」设计，但隔帧模式下每张 skip 帧的
+  连续计数恒为 1，等于每张 skip 帧都打 0.9 折，与 NR 帧的 1.0 形成 10% 明暗
+  呼吸。现在坡道只在**连续 ≥2 帧 skip** 时生效（`s_vrnrSkipRun >= 2`），
+  交替模式 skip 帧回到满强度。
+- **新增（实验）skip 帧 edit 权重下限 `VrnrWeightFloor`**（0.00–1.00，默认
+  0.60）：运动区 edit 不再整段衰减归零，下一张 NR 帧恢复时不产生跳变；调高
+  更稳、调低残影更少，0 = 关闭下限。
+- **新增（实验）运动矢量重投影对齐 `VrnrReproject`**（默认开）：skip 帧用游戏
+  MVec 把 2 帧前的陈旧神经输入对齐到本帧像素位置再做亮度差，消除「错位画面被
+  误判为运动」导致的整屏 edit 淡出脉冲（镜头平移 / 人物移动时最明显）。对齐与
+  原始采样取亮度差较小者，MV 符号约定无关；MV 不可用或资源不可读时自动回退。
+  实现为 resolve 着色器直接绑定游戏 MVec SRV（t4，root 签名 SRV 区 4→5、
+  常量 12→17），零新增显存分配。
+- **新增（实验）深度剪影保护**（Mode 1）：skip 帧在深度不连续处（人物 / 物体
+  轮廓）把 edit 权重压到 ≤0.10，陈旧 edit 不越过轮廓产生鬼影。
+- **UI 四端同步**：`dlssnr_shared.h` 末尾追加 `vrnrWeightFloor` /
+  `vrnrReproject`（companion 副本同步重编）；游戏内面板「高级」页新增
+  「权重下限（实验）」滑条与「运动矢量对齐（实验）」开关（中 EN RU 한 四语言，
+  均标注实验）；控制台 / 管理器调试页 / ReShade companion 同步新增控件；
+  INI 模板补 `VrnrWeightFloor` / `VrnrReproject` 键与说明。
+
+### 调参建议 Tuning
+
+- 人物仍轻微闪烁 → 提高 `VrnrWeightFloor`（0.70–0.80）；
+- 快速运动出现残影 → 降低 `VrnrWeightFloor`（0.40–0.50）或临时关闭
+  `VrnrReproject`；
+- 应急（不改代码）：降低 `TransferStrength` 至 0.7–0.8 可同比例缩小闪烁幅度。
+
+---
+
+## [0.7.0] — 2026-09-25
+
+### 新增 Added（上游同步 · xenmods/DLSSNR-Cost-Scaler main @ `efe2ed6`）
+
+- **同步上游 v1.0.6 算法更新**（以上游 main 最新快照为基准合并，完整保留本项目的
+  UI / 面板 / 管理器 / 防闪烁增强）：
+  - **零开销动态 FPS Scale Governor**（上游 `b09bcca`，默认关）：以 5% 离散档位
+    自动升降分辨率维持目标帧率（30–240 FPS）；异常帧过滤（>80ms 加载画面 /
+    ≤0.5ms 不计入）+ EWMA（约 30 帧）平滑 + 非对称滞后（<95% 目标持续 1.0s 降档、
+    >115% 目标持续 3.0s 升档）+ 冷却 dwell；**多档位槽位缓存**（槽位 4 → 8，按
+    workW/H 命中档位，0ms 瞬时切换）；关闭时 `FlushSecondaryTierSlots` 回收多余
+    档位槽位恢复基线显存。Governor 激活期间接管缩放：变焦热键被忽略并记日志、
+    非均匀缩放（Anamorphic）被覆盖；
+  - **Governor 帧生成目标模式**（上游 `c7e9b0b`，默认关）：新增 `EnableFgMode` /
+    `FgMultiplier`（1.0–10.0，默认 2.0），升降档判定改用
+    `有效帧率 = 基础 FPS × FG 倍率`，使用 DLSS 3 / FSR 3 / LSFG 2x/3x/4x 时
+    不再因基础帧率低于目标而被误降分辨率；预设 2x / 3x / 4x（上游 `efe2ed6`）；
+  - **ColorStrength 色相保持重构**（上游 `15f09dd`，shaders.hlsl）：亮度路径改用
+    色度向量比例缩放 + 阴影/高光安全钳制，消除 ColorStrength=0 时鲜艳光照与肤色
+    的「粉笔感/发灰」去饱和；
+  - **修复等比超采样绕过缩放 NR 路径**（上游 `7dc3dac`）：100% 直通判定统一为
+    双轴 0.005 容差；
+  - **ReleaseFeature 槽位泄漏修复**（上游 `b09bcca`）：移除首个匹配后的 `break`，
+    同一句柄命中的全部档位槽位都被释放；
+  - 同帧 pass 判定阈值 2.0ms → 1.0ms（支持 500 FPS 场景）。
+- **共享内存协议扩展**（`dlssnr_shared.h` + companion 副本同步重编）：Governor 组
+  13 个字段（`enableGovernor` / `governorTargetFps` / `governorMinScale` /
+  `governorMaxScale` / `governorHysteresisSec` / `governorCurrentTier` /
+  `debugMeasuredFps` / `debugMeasuredFrameTimeMs` / `debugGovernorState` /
+  `debugGovernorCooldownLeft` / `enableGovernorFgMode` / `governorFgMultiplier` /
+  `debugEffectiveFps`），插入位置与上游一致；`debugActiveSlot` 语义改为实际槽位索引。
+- **游戏内面板与独立控制台新增「Governor」页**（共享面板 `ui_panel.h`，现为
+  基础 / 高级 / 降噪 NR / **Governor** / 快捷键 五页）：开关、目标帧率滑条 +
+  30/60/75/90/120/144 预设芯片、最低 / 最高缩放滑条、冷却时间滑条、帧生成目标
+  模式开关 + 2x/3x/4x 预设芯片 + 倍率滑条；四语言（中/EN/RU/한）文案齐全；
+  `proxy_main.cpp` 三个 UI 桥接回调与 INI 持久化覆盖全部 `[Governor]` 新键。
+- **管理器「面板调试」页新增 Governor 控件组**：开关、目标帧率 / 最低 / 最高 /
+  冷却 / FG 倍率滑条 + 帧生成目标模式开关（四语言）。
+- **ReShade companion 新增 Dynamic FPS Governor 区块**：开关、目标帧率滑条 +
+  6 档预设、Min/Max/冷却滑条、FG 目标模式 + 2x/3x/4x 预设 + 自定义倍率、
+  实时遥测（平滑 FPS / 帧时间 / 状态灯 STABLE·COOLDOWN·STEPPING，FG 模式下
+  显示 Base/Display 双速率）；ini 读写与共享内存双向同步覆盖全部 Governor 字段。
+- **新增 `nvngx_dlssnr.ini` 发布模板**（对齐上游 + 补齐 fork 全部键：
+  `EnableUi` / `UiLanguage` / `KeyToggleUI` / `VrnrAntiFlicker`），含完整
+  `[Governor]` 区段说明。
+
+### 变更 Changed
+
+- `_upstream_ref/` 更新为上游 main 最新快照（含 Governor 完整实现与 tests/）。
+
+---
+
 ## [0.6.3] — 2026-09-09
 
 ### 新增 Added（CN fork）
@@ -220,6 +336,8 @@ All notable changes to **DLSS5-NR-Boost** are documented here.
   - 支持 SDR / HDR10 PQ / scRGB / R11G11B10，动态子矩形（DRS）跟踪。
 - 另致谢 [Dagherbou / OptiScaler_DLSSNR](https://github.com/Dagherbou/OptiScaler_DLSSNR)（匹配残差思路）、[OptiScaler](https://github.com/optiscaler/OptiScaler)、[clshortfuse / RenoDX](https://github.com/clshortfuse/renodx)、[AMD FidelityFX](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)（RCAS）。
 
+[0.7.0]: https://github.com/suviland/DLSSNR-Cost-Scaler-with-control-panel
+[0.6.3]: https://github.com/suviland/DLSSNR-Cost-Scaler-with-control-panel
 [0.4.0]: https://github.com/suviland/DLSSNR-Cost-Scaler-with-control-panel
 [0.3.0]: https://github.com/suviland/DLSSNR-Cost-Scaler-with-control-panel
 [0.1.0]: https://github.com/xenmods/DLSSNR-Cost-Scaler

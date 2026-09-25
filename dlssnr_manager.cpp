@@ -250,7 +250,10 @@ struct MS {
                   *tCtrlAlt, *lblMatched, *lblBilinear, *dbgSaved,
                   *tAnamorphic, *tScaleX, *tScaleY, *tDepthAware, *tVrnr, *tVrnrAf,
                   *tNRSet, *tCustomNR, *styleBal, *styleSharp, *styleCine,
-                  *lblIntensity, *lblLocalStruct, *lblLocalTone, *lblSkin, *tAutoMask;
+                  *lblIntensity, *lblLocalStruct, *lblLocalTone, *lblSkin, *tAutoMask,
+                  *tGovSet, *tGov, *tGovTarget, *tGovMin, *tGovMax, *tGovDwell,
+                  *tGovFg, *tGovMult, *tVrnrFloor, *tVrnrRep,
+                  *tVrnrAdapt, *tVrnrAdaptAmt, *tVrnrAdaptHi, *tVrnrAdaptLo;
     const wchar_t* cntFmt;
 };
 static const MS kM[LANG_COUNT] = {
@@ -281,6 +284,10 @@ static const MS kM[LANG_COUNT] = {
       L"各向异性缩放（实验）", L"水平缩放", L"垂直缩放", L"深度感知轮廓", L"隔帧推理 · 实验", L"跳帧防闪烁",
       L"NVIDIA NR 参数", L"自定义 NR 参数（覆盖调用方）", L"平衡", L"锐利", L"电影",
       L"强度", L"局部结构", L"局部色调", L"皮肤结构", L"自动遮罩",
+      L"Governor 帧率调节", L"启用 Governor", L"目标帧率", L"最低缩放", L"最高缩放",
+      L"冷却时间", L"帧生成目标模式", L"FG 倍率",
+      L"权重下限（实验）", L"运动矢量对齐（实验）",
+      L"帧时自适应（实验）", L"自适应幅度（实验）", L"自适应上限帧率", L"自适应下限帧率",
       L"发现 %d 个目标 · 已勾选 %d 项" },
     { L"In-game panel proxy · Install / Uninstall",
       L"Proxy package (auto-detected next to this manager)",
@@ -309,6 +316,10 @@ static const MS kM[LANG_COUNT] = {
       L"Anamorphic scaling (experimental)", L"Horizontal scale", L"Vertical scale", L"Depth-aware resolve", L"Alternating frames · exp", L"Skip-frame anti-flicker",
       L"NVIDIA NR settings", L"Custom NR params (override caller)", L"Balanced", L"Sharp", L"Cinematic",
       L"Intensity", L"Local structure", L"Local tone", L"Skin structure", L"Auto mask",
+      L"FPS Governor", L"Enable Governor", L"Target FPS", L"Min scale", L"Max scale",
+      L"Cooldown", L"Frame-Gen target mode", L"FG multiplier",
+      L"Weight floor (exp.)", L"MV reprojection (exp.)",
+      L"FPS adaptive (exp.)", L"Adaptive amount (exp.)", L"Adaptive FPS hi", L"Adaptive FPS lo",
       L"%d targets found · %d ticked" },
     { L"Прокси внутриигровой панели · Установка / удаление",
       L"Пакет прокси (определяется автоматически рядом с менеджером)",
@@ -337,6 +348,10 @@ static const MS kM[LANG_COUNT] = {
       L"Анизотропный масштаб (эксп.)", L"Гориз. масштаб", L"Верт. масштаб", L"Учёт глубины", L"Черезкадрово · эксп.", L"Анти-мерцание",
       L"Параметры NVIDIA NR", L"Свои параметры NR (замещают вызывавшего)", L"Баланс", L"Резкость", L"Кино",
       L"Интенсивность", L"Лок. структура", L"Лок. тон", L"Структура кожи", L"Автомаска",
+      L"Governor FPS", L"Включить Governor", L"Целевой FPS", L"Мин. масштаб", L"Макс. масштаб",
+      L"Охлаждение", L"Режим Frame-Gen", L"Множитель FG",
+      L"Мин. вес (эксп.)", L"Репроекция MV (эксп.)",
+      L"Адаптация FPS (эксп.)", L"Величина адапт. (эксп.)", L"Адапт. FPS верх", L"Адапт. FPS низ",
       L"Найдено %d · отмечено %d" },
     { L"게임 내 패널 프록시 · 설치 / 제거",
       L"프록시 패키지 (이 관리자와 같은 폴더면 자동 인식)",
@@ -365,6 +380,10 @@ static const MS kM[LANG_COUNT] = {
       L"아니소트로픽 배율 (실험)", L"가로 배율", L"세로 배율", L"깊이 인식", L"교대 프레임 · 실험", L"깜빡임 방지",
       L"NVIDIA NR 설정", L"NR 파라미터 사용 (호출부 대체)", L"밸런스", L"샤프", L"시네마틱",
       L"강도", L"로컬 구조", L"로컬 톤", L"피부 구조", L"자동 마스크",
+      L"FPS Governor", L"Governor 활성화", L"목표 FPS", L"최소 배율", L"최대 배율",
+      L"쿨다운", L"프레임 생성 모드", L"FG 배율",
+      L"가중치 하한 (실험)", L"MV 재투영 (실험)",
+      L"FPS 적응 (실험)", L"적응 강도 (실험)", L"적응 상한 FPS", L"적응 하한 FPS",
       L"%d개 발견 · %d개 선택" },
 };
 
@@ -1080,10 +1099,20 @@ struct DebugCfg {
     bool enableDepthAware = true;
     bool enableVrnr = false;
     bool vrnrAntiFlicker = true;   // 0.6.3 CN fork: skip-frame anti-flicker
+    float vrnrWeightFloor = 0.60f; // 0.7.1 CN fork (exp): skip-frame edit weight floor
+    bool vrnrReproject = true;     // 0.7.1 CN fork (exp): MV-aligned stale input
+    bool vrnrAdapt = true;         // 0.7.3 CN fork (exp): frame-time adaptive strength
+    float vrnrAdaptAmount = 0.60f; // 0.7.3 (exp): max dim fraction (0..1)
+    float vrnrAdaptFpsHi = 45.0f;  // 0.7.3 (exp): start dimming below this FPS
+    float vrnrAdaptFpsLo = 25.0f;  // 0.7.3 (exp): full dim below this FPS
     bool useCustomNR = false;
     unsigned nrStyle = 0;   // 0 Balanced / 1 Sharp / 2 Cinematic
     float nrIntensity = 1.0f, nrLocalStructure = 1.0f, nrLocalTone = 1.0f, nrSkin = -1.0f;
     bool nrAutoMask = false;
+    // v0.7.0 upstream: Governor + FG target mode
+    bool govEnable = false, govFgMode = false;
+    float govTargetFps = 60.0f, govMinScale = 0.50f, govMaxScale = 1.00f;
+    float govHysteresis = 2.0f, govFgMult = 2.0f;
 };
 static DebugCfg s_pcfg;
 static wchar_t  s_pini[MAX_PATH] = { 0 };
@@ -1115,6 +1144,24 @@ static void ClampPanel() {
     if (s_pcfg.color > 1.0f) s_pcfg.color = 1.0f;
     if (s_pcfg.sharpness < 0.0f) s_pcfg.sharpness = 0.0f;
     if (s_pcfg.sharpness > 1.0f) s_pcfg.sharpness = 1.0f;
+    if (s_pcfg.govTargetFps < 30.0f) s_pcfg.govTargetFps = 30.0f;
+    if (s_pcfg.govTargetFps > 240.0f) s_pcfg.govTargetFps = 240.0f;
+    if (s_pcfg.govMinScale < 0.25f) s_pcfg.govMinScale = 0.25f;
+    if (s_pcfg.govMinScale > 2.00f) s_pcfg.govMinScale = 2.00f;
+    if (s_pcfg.govMaxScale < s_pcfg.govMinScale) s_pcfg.govMaxScale = s_pcfg.govMinScale;
+    if (s_pcfg.govMaxScale > 2.00f) s_pcfg.govMaxScale = 2.00f;
+    if (s_pcfg.govHysteresis < 0.5f) s_pcfg.govHysteresis = 0.5f;
+    if (s_pcfg.govHysteresis > 10.0f) s_pcfg.govHysteresis = 10.0f;
+    if (s_pcfg.govFgMult < 1.0f) s_pcfg.govFgMult = 1.0f;
+    if (s_pcfg.govFgMult > 10.0f) s_pcfg.govFgMult = 10.0f;
+    if (s_pcfg.vrnrWeightFloor < 0.0f) s_pcfg.vrnrWeightFloor = 0.0f;
+    if (s_pcfg.vrnrWeightFloor > 1.0f) s_pcfg.vrnrWeightFloor = 1.0f;
+    if (s_pcfg.vrnrAdaptAmount < 0.0f) s_pcfg.vrnrAdaptAmount = 0.0f;
+    if (s_pcfg.vrnrAdaptAmount > 1.0f) s_pcfg.vrnrAdaptAmount = 1.0f;
+    if (s_pcfg.vrnrAdaptFpsHi < 15.0f) s_pcfg.vrnrAdaptFpsHi = 15.0f;
+    if (s_pcfg.vrnrAdaptFpsHi > 120.0f) s_pcfg.vrnrAdaptFpsHi = 120.0f;
+    if (s_pcfg.vrnrAdaptFpsLo < 10.0f) s_pcfg.vrnrAdaptFpsLo = 10.0f;
+    if (s_pcfg.vrnrAdaptFpsLo > s_pcfg.vrnrAdaptFpsHi - 1.0f) s_pcfg.vrnrAdaptFpsLo = s_pcfg.vrnrAdaptFpsHi - 1.0f;
 }
 static void LoadPanelIni() {
     wchar_t buf[64];
@@ -1145,6 +1192,16 @@ static void LoadPanelIni() {
     s_pcfg.enableDepthAware = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", 1, s_pini) != 0;
     s_pcfg.enableVrnr       = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", 0, s_pini) != 0;
     s_pcfg.vrnrAntiFlicker  = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAntiFlicker", 1, s_pini) != 0;
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrWeightFloor", L"0.60", buf, 64, s_pini);
+    s_pcfg.vrnrWeightFloor = (float)_wtof(buf);
+    s_pcfg.vrnrReproject   = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrReproject", 1, s_pini) != 0;
+    s_pcfg.vrnrAdapt       = GetPrivateProfileIntW(L"DLSSNR_Proxy", L"VrnrAdapt", 1, s_pini) != 0;
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptAmount", L"0.60", buf, 64, s_pini);
+    s_pcfg.vrnrAdaptAmount = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsHi", L"45", buf, 64, s_pini);
+    s_pcfg.vrnrAdaptFpsHi  = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsLo", L"25", buf, 64, s_pini);
+    s_pcfg.vrnrAdaptFpsLo  = (float)_wtof(buf);
     s_pcfg.useCustomNR      = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseCustomSettings", 0, s_pini) != 0;
     s_pcfg.nrStyle          = (unsigned)GetPrivateProfileIntW(L"DLSSNR_Settings", L"Style", 0, s_pini);
     GetPrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", L"1.00", buf, 64, s_pini);
@@ -1156,6 +1213,19 @@ static void LoadPanelIni() {
     GetPrivateProfileStringW(L"DLSSNR_Settings", L"SkinStructureStrength", L"-1.00", buf, 64, s_pini);
     s_pcfg.nrSkin = (float)_wtof(buf);
     s_pcfg.nrAutoMask = GetPrivateProfileIntW(L"DLSSNR_Settings", L"UseAutoMask", 0, s_pini) != 0;
+    // v0.7.0 upstream: Governor + FG target mode
+    s_pcfg.govEnable = GetPrivateProfileIntW(L"Governor", L"EnableGovernor", 0, s_pini) != 0;
+    GetPrivateProfileStringW(L"Governor", L"TargetFps", L"60.0", buf, 64, s_pini);
+    s_pcfg.govTargetFps = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"MinScale", L"0.50", buf, 64, s_pini);
+    s_pcfg.govMinScale = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"MaxScale", L"1.00", buf, 64, s_pini);
+    s_pcfg.govMaxScale = (float)_wtof(buf);
+    GetPrivateProfileStringW(L"Governor", L"HysteresisSec", L"2.0", buf, 64, s_pini);
+    s_pcfg.govHysteresis = (float)_wtof(buf);
+    s_pcfg.govFgMode = GetPrivateProfileIntW(L"Governor", L"EnableFgMode", 0, s_pini) != 0;
+    GetPrivateProfileStringW(L"Governor", L"FgMultiplier", L"2.0", buf, 64, s_pini);
+    s_pcfg.govFgMult = (float)_wtof(buf);
     ClampPanel();
 }
 static void SavePanelIni() {
@@ -1181,6 +1251,12 @@ static void SavePanelIni() {
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"EnableDepthAwareResolve", s_pcfg.enableDepthAware ? L"1" : L"0", s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"EnableAlternatingFrames", s_pcfg.enableVrnr ? L"1" : L"0", s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAntiFlicker", s_pcfg.vrnrAntiFlicker ? L"1" : L"0", s_pini);
+    swprintf_s(buf, L"%.2f", s_pcfg.vrnrWeightFloor); WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrWeightFloor", buf, s_pini);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrReproject", s_pcfg.vrnrReproject ? L"1" : L"0", s_pini);
+    WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdapt", s_pcfg.vrnrAdapt ? L"1" : L"0", s_pini);
+    swprintf_s(buf, L"%.2f", s_pcfg.vrnrAdaptAmount); WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptAmount", buf, s_pini);
+    swprintf_s(buf, L"%.0f", s_pcfg.vrnrAdaptFpsHi);  WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsHi", buf, s_pini);
+    swprintf_s(buf, L"%.0f", s_pcfg.vrnrAdaptFpsLo);  WritePrivateProfileStringW(L"DLSSNR_Proxy", L"VrnrAdaptFpsLo", buf, s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Settings", L"UseCustomSettings", s_pcfg.useCustomNR ? L"1" : L"0", s_pini);
     swprintf_s(buf, L"%u", s_pcfg.nrStyle); WritePrivateProfileStringW(L"DLSSNR_Settings", L"Style", buf, s_pini);
     swprintf_s(buf, L"%.2f", s_pcfg.nrIntensity); WritePrivateProfileStringW(L"DLSSNR_Settings", L"Intensity", buf, s_pini);
@@ -1188,6 +1264,14 @@ static void SavePanelIni() {
     swprintf_s(buf, L"%.2f", s_pcfg.nrLocalTone); WritePrivateProfileStringW(L"DLSSNR_Settings", L"LocalToneStrength", buf, s_pini);
     swprintf_s(buf, L"%.2f", s_pcfg.nrSkin); WritePrivateProfileStringW(L"DLSSNR_Settings", L"SkinStructureStrength", buf, s_pini);
     WritePrivateProfileStringW(L"DLSSNR_Settings", L"UseAutoMask", s_pcfg.nrAutoMask ? L"1" : L"0", s_pini);
+    // v0.7.0 upstream: Governor + FG target mode
+    WritePrivateProfileStringW(L"Governor", L"EnableGovernor", s_pcfg.govEnable ? L"1" : L"0", s_pini);
+    swprintf_s(buf, L"%.0f", s_pcfg.govTargetFps); WritePrivateProfileStringW(L"Governor", L"TargetFps", buf, s_pini);
+    swprintf_s(buf, L"%.2f", s_pcfg.govMinScale);  WritePrivateProfileStringW(L"Governor", L"MinScale", buf, s_pini);
+    swprintf_s(buf, L"%.2f", s_pcfg.govMaxScale);  WritePrivateProfileStringW(L"Governor", L"MaxScale", buf, s_pini);
+    swprintf_s(buf, L"%.1f", s_pcfg.govHysteresis);WritePrivateProfileStringW(L"Governor", L"HysteresisSec", buf, s_pini);
+    WritePrivateProfileStringW(L"Governor", L"EnableFgMode", s_pcfg.govFgMode ? L"1" : L"0", s_pini);
+    swprintf_s(buf, L"%.1f", s_pcfg.govFgMult);    WritePrivateProfileStringW(L"Governor", L"FgMultiplier", buf, s_pini);
     WritePrivateProfileStringW(nullptr, nullptr, nullptr, s_pini);   // flush
 }
 static void MarkPdirty() {
@@ -1212,7 +1296,10 @@ enum DbgField {
     D_PROXY = 0, D_HOTKEYS, D_UI, D_CTRLALT, D_MODE,
     D_SCALE, D_TRANSFER, D_COLOR, D_SHARP,
     D_ANAM, D_SX, D_SY, D_DEPTH, D_VRNR, D_VRAF,
+    D_VFLOOR, D_VREPROJ,
+    D_VADAPT, D_VADAPTAMT, D_VADAPTHI, D_VADAPTLO,
     D_CUSTOMNR, D_STYLE, D_INTENSITY, D_LSTRUCT, D_LTONE, D_SKIN, D_AUTOMASK,
+    D_GOVEN, D_GOVTGT, D_GOVMIN, D_GOVMAX, D_GOVDWELL, D_GOVFG, D_GOVMULT,
     K_PROXY, K_MODE, K_UP, K_DOWN, K_UI,
 };
 struct DbgRow { DbgKind kind; int f; };
@@ -1224,12 +1311,23 @@ static const DbgRow kDbgRows[] = {
     { DBG_TOGGLE,  D_ANAM },
     { DBG_SLIDER,  D_SX }, { DBG_SLIDER, D_SY },
     { DBG_TOGGLE,  D_DEPTH }, { DBG_TOGGLE, D_VRNR }, { DBG_TOGGLE, D_VRAF },
+    { DBG_SLIDER,  D_VFLOOR }, { DBG_TOGGLE, D_VREPROJ },
+    { DBG_TOGGLE,  D_VADAPT }, { DBG_SLIDER, D_VADAPTAMT },
+    { DBG_SLIDER,  D_VADAPTHI }, { DBG_SLIDER, D_VADAPTLO },
     { DBG_SECTION, 1 },
     { DBG_TOGGLE,  D_CUSTOMNR },
     { DBG_SEG3,    D_STYLE },
     { DBG_SLIDER,  D_INTENSITY }, { DBG_SLIDER, D_LSTRUCT },
     { DBG_SLIDER,  D_LTONE }, { DBG_SLIDER, D_SKIN },
     { DBG_TOGGLE,  D_AUTOMASK },
+    { DBG_SECTION, 2 },
+    { DBG_TOGGLE,  D_GOVEN },
+    { DBG_SLIDER,  D_GOVTGT },
+    { DBG_SLIDER,  D_GOVMIN },
+    { DBG_SLIDER,  D_GOVMAX },
+    { DBG_SLIDER,  D_GOVDWELL },
+    { DBG_TOGGLE,  D_GOVFG },
+    { DBG_SLIDER,  D_GOVMULT },
     { DBG_SECTION, 0 },
     { DBG_TOGGLE, D_CTRLALT },
     { DBG_KEY, K_PROXY }, { DBG_KEY, K_MODE }, { DBG_KEY, K_UP },
@@ -1286,8 +1384,12 @@ static bool DbgGetB(int f) {
     case D_DEPTH:   return s_pcfg.enableDepthAware;
     case D_VRNR:    return s_pcfg.enableVrnr;
     case D_VRAF:    return s_pcfg.vrnrAntiFlicker;
+    case D_VREPROJ: return s_pcfg.vrnrReproject;
+    case D_VADAPT:  return s_pcfg.vrnrAdapt;
     case D_CUSTOMNR:return s_pcfg.useCustomNR;
     case D_AUTOMASK:return s_pcfg.nrAutoMask;
+    case D_GOVEN:   return s_pcfg.govEnable;
+    case D_GOVFG:   return s_pcfg.govFgMode;
     }
     return false;
 }
@@ -1301,8 +1403,12 @@ static void DbgSetB(int f, bool v) {
     case D_DEPTH:   s_pcfg.enableDepthAware = v; break;
     case D_VRNR:    s_pcfg.enableVrnr = v; break;
     case D_VRAF:    s_pcfg.vrnrAntiFlicker = v; break;
+    case D_VREPROJ: s_pcfg.vrnrReproject = v; break;
+    case D_VADAPT:  s_pcfg.vrnrAdapt = v; break;
     case D_CUSTOMNR:s_pcfg.useCustomNR = v; break;
     case D_AUTOMASK:s_pcfg.nrAutoMask = v; break;
+    case D_GOVEN:   s_pcfg.govEnable = v; break;
+    case D_GOVFG:   s_pcfg.govFgMode = v; break;
     }
 }
 static float DbgGetF(int f) {
@@ -1317,6 +1423,15 @@ static float DbgGetF(int f) {
     case D_LSTRUCT:  return s_pcfg.nrLocalStructure;
     case D_LTONE:    return s_pcfg.nrLocalTone;
     case D_SKIN:     return s_pcfg.nrSkin;
+    case D_GOVTGT:   return s_pcfg.govTargetFps;
+    case D_GOVMIN:   return s_pcfg.govMinScale;
+    case D_GOVMAX:   return s_pcfg.govMaxScale;
+    case D_GOVDWELL: return s_pcfg.govHysteresis;
+    case D_GOVMULT:  return s_pcfg.govFgMult;
+    case D_VFLOOR:   return s_pcfg.vrnrWeightFloor;
+    case D_VADAPTAMT: return s_pcfg.vrnrAdaptAmount;
+    case D_VADAPTHI: return s_pcfg.vrnrAdaptFpsHi;
+    case D_VADAPTLO: return s_pcfg.vrnrAdaptFpsLo;
     }
     return 0.0f;
 }
@@ -1332,6 +1447,15 @@ static void DbgSetF(int f, float v) {
     case D_LSTRUCT:  s_pcfg.nrLocalStructure = v; break;
     case D_LTONE:    s_pcfg.nrLocalTone = v; break;
     case D_SKIN:     s_pcfg.nrSkin = v; break;
+    case D_GOVTGT:   s_pcfg.govTargetFps = v; break;
+    case D_GOVMIN:   s_pcfg.govMinScale = v; break;
+    case D_GOVMAX:   s_pcfg.govMaxScale = v; break;
+    case D_GOVDWELL: s_pcfg.govHysteresis = v; break;
+    case D_GOVMULT:  s_pcfg.govFgMult = v; break;
+    case D_VFLOOR:   s_pcfg.vrnrWeightFloor = v; break;
+    case D_VADAPTAMT: s_pcfg.vrnrAdaptAmount = v; break;
+    case D_VADAPTHI: s_pcfg.vrnrAdaptFpsHi = v; break;
+    case D_VADAPTLO: s_pcfg.vrnrAdaptFpsLo = v; break;
     }
     ClampPanel();
 }
@@ -1339,6 +1463,12 @@ static float DbgFMin(int f) {
     switch (f) {
     case D_SCALE: case D_SX: case D_SY: return 0.25f;
     case D_SKIN: return -1.0f;
+    case D_GOVTGT: return 30.0f;
+    case D_GOVMIN: case D_GOVMAX: return 0.25f;
+    case D_GOVDWELL: return 0.5f;
+    case D_GOVMULT: return 1.0f;
+    case D_VADAPTHI: return 15.0f;
+    case D_VADAPTLO: return 10.0f;
     }
     return 0.0f;
 }
@@ -1346,6 +1476,12 @@ static float DbgFMax(int f) {
     switch (f) {
     case D_SCALE: case D_SX: case D_SY: return 2.0f;
     case D_TRANSFER: case D_INTENSITY: case D_LSTRUCT: case D_LTONE: return 2.0f;
+    case D_GOVTGT: return 240.0f;
+    case D_GOVMIN: case D_GOVMAX: return 2.0f;
+    case D_GOVDWELL: return 10.0f;
+    case D_GOVMULT: return 10.0f;
+    case D_VADAPTHI: return 120.0f;
+    case D_VADAPTLO: return 90.0f;
     }
     return 1.0f;
 }
@@ -1383,12 +1519,25 @@ static void DbgLabel(int f, wchar_t* out, size_t cch) {
     case D_DEPTH:   t = m.tDepthAware; break;
     case D_VRNR:    t = m.tVrnr; break;
     case D_VRAF:    t = m.tVrnrAf; break;
+    case D_VFLOOR:  t = m.tVrnrFloor; break;
+    case D_VREPROJ: t = m.tVrnrRep; break;
+    case D_VADAPT:  t = m.tVrnrAdapt; break;
+    case D_VADAPTAMT: t = m.tVrnrAdaptAmt; break;
+    case D_VADAPTHI: t = m.tVrnrAdaptHi; break;
+    case D_VADAPTLO: t = m.tVrnrAdaptLo; break;
     case D_CUSTOMNR:t = m.tCustomNR; break;
     case D_INTENSITY:t = m.lblIntensity; break;
     case D_LSTRUCT: t = m.lblLocalStruct; break;
     case D_LTONE:   t = m.lblLocalTone; break;
     case D_SKIN:    t = m.lblSkin; break;
     case D_AUTOMASK:t = m.tAutoMask; break;
+    case D_GOVEN:   t = m.tGov; break;
+    case D_GOVTGT:  t = m.tGovTarget; break;
+    case D_GOVMIN:  t = m.tGovMin; break;
+    case D_GOVMAX:  t = m.tGovMax; break;
+    case D_GOVDWELL:t = m.tGovDwell; break;
+    case D_GOVFG:   t = m.tGovFg; break;
+    case D_GOVMULT: t = m.tGovMult; break;
     }
     swprintf_s(out, cch, L"%s", t);
 }
@@ -1879,7 +2028,7 @@ static void DrawAll(HDC dc, int W, int H) {
                     SelectObject(dc, g_fontSmall);
                     SetTextColor(dc, k.onVar);
                     RECT sr2{ rl, y + 8, rr, y + rh };
-                    DrawTextW(dc, row.f == 0 ? m.tKeys : m.tNRSet, -1, &sr2,
+                    DrawTextW(dc, row.f == 0 ? m.tKeys : (row.f == 2 ? m.tGovSet : m.tNRSet), -1, &sr2,
                               DT_LEFT | DT_SINGLELINE);
                     continue;
                 }
@@ -1951,7 +2100,11 @@ static void DrawAll(HDC dc, int W, int H) {
                     DrawTextW(dc, lb, -1, &lr4, DT_LEFT | DT_SINGLELINE);
                     float v = DbgGetF(row.f), lo = DbgFMin(row.f), hi = DbgFMax(row.f);
                     wchar_t vv[24];
-                    if (row.f == D_SCALE) swprintf_s(vv, L"%d%%", (int)(v * 100.0f + 0.5f));
+                    if (row.f == D_SCALE || row.f == D_GOVMIN || row.f == D_GOVMAX)
+                        swprintf_s(vv, L"%d%%", (int)(v * 100.0f + 0.5f));
+                    else if (row.f == D_GOVTGT)  swprintf_s(vv, L"%.0f FPS", v);
+                    else if (row.f == D_GOVDWELL)swprintf_s(vv, L"%.1f s", v);
+                    else if (row.f == D_GOVMULT) swprintf_s(vv, L"%.1f\u00d7", v);
                     else swprintf_s(vv, L"%.2f", v);
                     SelectObject(dc, g_fontBold);
                     SetTextColor(dc, k.primary);
