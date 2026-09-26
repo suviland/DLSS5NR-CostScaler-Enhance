@@ -4,11 +4,11 @@
   <b>简体中文</b> ｜ <a href="README.md">English</a> ｜ <a href="README-RU.md">Русский</a> ｜ <a href="README-KO.md">한국어</a>
 </p>
 
-> ✅ **实测通过**：ReShade（含 RenoDX 系插件）·《上古卷轴》社区着色器 [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS 插件（`renodx-dlss.addon64`）
+> **实测通过**：ReShade（含 RenoDX 系插件）·《上古卷轴》社区着色器 [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS 插件（`renodx-dlss.addon64`）
 
 ---
 
-## ✨ 本分支的优势（对比上游）
+## 本分支的优势（对比上游）
 
 本仓库是 [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) 的增强分支（上游 v1.0.5 已完整同步）。上游是一个"手改 ini + 重启游戏"的纯算法代理，本分支把它升级为**所见即所得的实时调参工具链**，并深度改造了跳帧降噪：
 
@@ -22,7 +22,7 @@
 | 界面 | — | M3E 风格、深浅双主题、中 / EN / RU / 한 四语言 |
 | 安全面 | — | SEH 崩溃护盾，着色器异常不带走游戏 |
 
-## 🆕 新特性
+## 新特性
 
 ### 三端实时联动的调参体系
 

@@ -4,11 +4,11 @@
   <a href="README-CN.md">简体中文</a> ｜ <b>English</b> ｜ <a href="README-RU.md">Русский</a> ｜ <a href="README-KO.md">한국어</a>
 </p>
 
-> ✅ **Field-tested**: ReShade (incl. RenoDX-family plugins) · The Elder Scrolls [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS plugin (`renodx-dlss.addon64`)
+> **Field-tested**: ReShade (incl. RenoDX-family plugins) · The Elder Scrolls [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS plugin (`renodx-dlss.addon64`)
 
 ---
 
-## ✨ What this fork adds (vs upstream)
+## What this fork adds (vs upstream)
 
 This repository is an enhanced fork of [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) (upstream v1.0.5 fully synced). Upstream is a pure algorithmic proxy driven by hand-edited INI files and game restarts; this fork turns it into a **WYSIWYG real-time tuning toolchain** and deeply reworks frame-alternating denoising:
 
@@ -22,7 +22,7 @@ This repository is an enhanced fork of [xenmods/DLSSNR-Cost-Scaler](https://gith
 | UI | — | M3E style, light & dark themes, 中 / EN / RU / 한 |
 | Safety | — | SEH crash shield; shader exceptions never take the game down |
 
-## 🆕 Highlights
+## Highlights
 
 ### Three-end live tuning
 

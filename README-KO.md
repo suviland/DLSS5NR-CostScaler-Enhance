@@ -4,11 +4,11 @@
   <a href="README-CN.md">简体中文</a> ｜ <a href="README.md">English</a> ｜ <a href="README-RU.md">Русский</a> ｜ <b>한국어</b>
 </p>
 
-> ✅ **실사 테스트 통과**: ReShade (RenoDX 계열 플러그인 포함) · 엘더스크롤 [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS 플러그인 (`renodx-dlss.addon64`)
+> **실사 테스트 통과**: ReShade (RenoDX 계열 플러그인 포함) · 엘더스크롤 [Community Shaders](https://github.com/doodlegabe/CommunityShaders) · clshortfuse DLSS 플러그인 (`renodx-dlss.addon64`)
 
 ---
 
-## ✨ 이 포크의 강점 (업스트림 대비)
+## 이 포크의 강점 (업스트림 대비)
 
 이 저장소는 [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler)의 강화 포크입니다(업스트림 v1.0.5 완전 동기화). 업스트림은 ini 수동 수정 + 게임 재시작 방식의 순수 알고리즘 프록시이지만, 이 포크는 이를 **실시간 WYSIWYG 튜닝 툴체인**으로 격상시키고 프레임 교차 노이즈 감소를 깊게 개선했습니다:
 
@@ -22,7 +22,7 @@
 | UI | — | M3E 스타일, 라이트·다크 테마, 中 / EN / RU / 한 |
 | 안전성 | — | SEH 크래시 실드, 셰이더 예외가 게임을 끌어내리지 않음 |
 
-## 🆕 새로운 기능
+## 새로운 기능
 
 ### 3개 클라이언트 실시간 연동 튜닝
 

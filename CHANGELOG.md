@@ -26,7 +26,7 @@ All notable changes to **DLSS5-NR-Boost** are documented here.
 
 ## [0.7.2] — 2026-09-25（已撤回，未发布）
 
-> **⚠️ 实测黑屏 + 画面冻结，整版撤回。** 自适应权重下限 + ping-pong R8
+> ** 实测黑屏 + 画面冻结，整版撤回。** 自适应权重下限 + ping-pong R8
 > 权重图 EMA 引入 GPU 持久纹理（SRV/UAV 互转），疑似资源状态转换 /
 > 描述符绑定问题导致 device removed。源码备份于
 > `backups/src-0.7.2-20260925-broken.zip`，代码已回滚至 0.7.1 基线重做。

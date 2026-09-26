@@ -4,11 +4,11 @@
   <a href="README-CN.md">简体中文</a> ｜ <a href="README.md">English</a> ｜ <b>Русский</b> ｜ <a href="README-KO.md">한국어</a>
 </p>
 
-> ✅ **Проверено на практике**: ReShade (включая плагины семейства RenoDX) · Community Shaders для TES ([Community Shaders](https://github.com/doodlegabe/CommunityShaders)) · DLSS-плагин clshortfuse (`renodx-dlss.addon64`)
+> **Проверено на практике**: ReShade (включая плагины семейства RenoDX) · Community Shaders для TES ([Community Shaders](https://github.com/doodlegabe/CommunityShaders)) · DLSS-плагин clshortfuse (`renodx-dlss.addon64`)
 
 ---
 
-## ✨ Преимущества этой ветки (сравнение с апстримом)
+## Преимущества этой ветки (сравнение с апстримом)
 
 Этот репозиторий — расширенная ветка [xenmods/DLSSNR-Cost-Scaler](https://github.com/xenmods/DLSSNR-Cost-Scaler) (апстрим v1.0.5 полностью синхронизирован). Апстрим — чисто алгоритмический прокси с настройкой через правку ini и перезапуск игры; эта ветка превращает его в **инструментарий настройки в реальном времени «что видишь, то и получаешь»** и глубоко перерабатывает чередование кадров при шумоподавлении:
 
@@ -22,7 +22,7 @@
 | Интерфейс | — | Стиль M3E, светлая и тёмная темы, 中 / EN / RU / 한 |
 | Безопасность | — | SEH-защита от сбоев; исключения шейдеров не «роняют» игру |
 
-## 🆕 Новые возможности
+## Новые возможности
 
 ### Настройка с синхронизацией трёх клиентов
 
